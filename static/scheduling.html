@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚡ LP Lab · 排班求解器</title>
+<style>
+  :root {
+    --bg: #0b0f1a; --bg-glow: radial-gradient(1200px 600px at 70% -10%, #1e293b55, transparent),
+                        radial-gradient(900px 500px at 10% 110%, #1d4ed822, transparent);
+    --card: #111827; --card-hover: #131c2e; --border: #1f2a3d; --border-strong: #2b3a55;
+    --text: #e5ecf5; --muted: #8b98ab; --accent: #3b82f6; --accent-soft: #2563eb22;
+    --green-bg: #052e1a; --green-fg: #4ade80; --green-bd: #14532d;
+    --yellow-bg: #33270a; --yellow-fg: #fbbf24; --yellow-bd: #713f12;
+    --navy-bg: #1e2b45; --navy-fg: #93b4f8; --navy-bd: #2f4368;
+    --rest-bg: #0e1422; --rest-fg: #55637a; --rest-bd: #1a2436;
+    --err-bg: #3f1214; --err-fg: #f87171; --err-bd: #7f1d1d;
+    --input-bg: #0d1524; --input-bd: #253248;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: var(--bg); background-image: var(--bg-glow); background-attachment: fixed;
+         color: var(--text); margin: 0; padding: 28px 24px 48px;
+         -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: .3px; }
+  h1 small { color: var(--muted); font-weight: normal; font-size: 13px; margin-left: 10px; }
+  header .toolbar .btn { background: var(--card); border: 1px solid var(--border-strong); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          padding: 18px 20px; margin-bottom: 16px;
+          box-shadow: 0 1px 0 #ffffff06 inset, 0 8px 24px #00000040; }
+  .card > h2 { font-size: 14px; margin: 0 0 14px; color: var(--accent);
+               text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px;
+          letter-spacing: .3px; }
+  input[type=text], input[type=number], input[type=time], select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--input-bd); border-radius: 7px;
+    font-size: 13px; background: var(--input-bg); color: var(--text);
+    transition: border-color .15s, box-shadow .15s; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft); }
+  input::placeholder, textarea::placeholder { color: #46536a; }
+  select option { background: var(--input-bg); color: var(--text); }
+  textarea { font-family: ui-monospace, SFMono-Regular, monospace; resize: vertical; line-height: 1.6; }
+  .grid-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 7px 9px; text-align: center; }
+  th { background: #0d1420; color: var(--muted); font-weight: 500; white-space: nowrap;
+       letter-spacing: .3px; }
+  td input { min-width: 60px; background: var(--input-bg); }
+  .row-actions { width: 50px; }
+  .btn { border: 1px solid var(--border-strong); border-radius: 7px; padding: 8px 16px;
+         font-size: 13px; cursor: pointer; background: var(--input-bg); color: var(--text);
+         transition: border-color .15s, background .15s, transform .1s; }
+  .btn:hover { border-color: var(--accent); background: var(--card-hover); }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: linear-gradient(180deg, #3b82f6, #2563eb); border: none;
+                 color: #fff; font-size: 15px; font-weight: 600; padding: 11px 36px;
+                 border-radius: 9px; letter-spacing: 1px;
+                 box-shadow: 0 4px 18px #2563eb55; }
+  .btn-primary:hover { box-shadow: 0 6px 26px #2563eb80; background: linear-gradient(180deg, #4f8ef7, #2b6ef0); }
+  .btn-primary:disabled { opacity: .6; cursor: wait; }
+  .btn-sm { padding: 3px 10px; font-size: 12px; }
+  .btn-link { background: none; border: 1px dashed var(--border-strong); color: var(--muted); }
+  .btn-link:hover { color: var(--text); border-color: var(--accent); background: none; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .solve-bar { text-align: center; margin: 26px 0; }
+  .cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .cols-2 { grid-template-columns: 1fr; } }
+  .banner { border-radius: 9px; padding: 12px 16px; margin-bottom: 14px; font-size: 13.5px;
+            border: 1px solid transparent; }
+  .banner.ok { background: var(--green-bg); color: var(--green-fg); border-color: var(--green-bd); }
+  .banner.err { background: var(--err-bg); color: var(--err-fg); border-color: var(--err-bd); }
+  .banner.warn { background: var(--yellow-bg); color: var(--yellow-fg); border-color: var(--yellow-bd); }
+  .cell-early { background: var(--green-bg); color: var(--green-fg); font-weight: 600;
+                border-color: var(--green-bd) !important; }
+  .cell-late  { background: var(--yellow-bg); color: var(--yellow-fg); font-weight: 600;
+                border-color: var(--yellow-bd) !important; }
+  .cell-night { background: var(--navy-bg); color: var(--navy-fg); font-weight: 600;
+                border-color: var(--navy-bd) !important; }
+  .cell-rest  { background: var(--rest-bg); color: var(--rest-fg);
+                border-color: var(--rest-bd) !important; }
+  .result-table td:first-child, .result-table th:first-child { text-align: left; white-space: nowrap; }
+  .scroll-x { overflow-x: auto; }
+  .stats-table td { text-align: right; }
+  .stats-table td:first-child, .stats-table th:first-child { text-align: left; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hidden { display: none; }
+  .holiday-picker { margin-top: 14px; padding: 12px; background: var(--input-bg);
+                    border: 1px solid var(--border); border-radius: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+          border: 1px solid var(--border-strong); background: var(--card);
+          color: var(--text); transition: all .12s; user-select: none; }
+  .chip:hover { border-color: var(--accent); }
+  .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chip .wd { color: var(--muted); font-size: 10px; margin-left: 4px; }
+  .chip.on .wd { color: #ffffffb0; }
+  th.holiday, td.holiday { background: #171209 !important; color: #fbbf24 !important;
+                           opacity: .55; font-style: italic; }
+  td.holiday input { background: #171209; color: #fbbf24; border-color: #713f12; }
+  .datefield { cursor: pointer; font-variant-numeric: tabular-nums; }
+  .datefield:hover { border-color: var(--accent); }
+
+  /* ---- custom calendar popover ---- */
+  .cal-pop { position: fixed; z-index: 100; background: var(--card);
+             border: 1px solid var(--border-strong); border-radius: 12px;
+             padding: 14px 16px; box-shadow: 0 16px 48px #000000cc, 0 2px 8px #000000aa;
+             width: 288px; user-select: none; }
+  .cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .cal-title { font-size: 14px; font-weight: 600; letter-spacing: .5px; }
+  .cal-nav { background: none; border: 1px solid var(--border-strong); color: var(--text);
+             border-radius: 6px; width: 28px; height: 26px; cursor: pointer; font-size: 12px;
+             line-height: 1; }
+  .cal-nav:hover { border-color: var(--accent); background: var(--card-hover); }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .cal-wd { text-align: center; font-size: 11px; color: var(--muted); padding: 4px 0; }
+  .cal-wd.sat, .cal-wd.sun { color: #64748b; }
+  .cal-d { text-align: center; padding: 6px 0; font-size: 13px; border-radius: 7px;
+           cursor: pointer; border: 1px solid transparent; font-variant-numeric: tabular-nums;
+           transition: background .1s, border-color .1s; }
+  .cal-d:hover { border-color: var(--accent); }
+  .cal-d.dim { color: #3d4a60; cursor: default; }
+  .cal-d.dim:hover { border-color: transparent; }
+  .cal-d.wkend { color: #93b4f8; }
+  .cal-d.sel { background: var(--accent); color: #fff; font-weight: 600; }
+  .cal-d.today { border-color: var(--accent); }
+  .cal-d.hol { background: #171209; color: #fbbf24; }
+  .cal-d.hol::after { content: '·'; display: block; font-size: 8px; line-height: 0;
+                      margin-top: 2px; color: #fbbf24; }
+  .cal-foot { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+              font-size: 11px; color: var(--muted); text-align: center; }
+  .quickfill { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+               padding: 10px 12px; background: var(--input-bg);
+               border: 1px solid var(--border); border-radius: 8px; }
+  .quickfill-fields { display: flex; gap: 10px; flex-wrap: wrap; flex: 1; }
+  .qf-item { display: flex; align-items: center; gap: 6px; }
+  .qf-item label { margin: 0; font-size: 12px; }
+  .qf-item input { width: 70px; padding: 4px 8px; font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>⚡ LP Lab <small>OR-Tools 优化工具集 · 排班求解器</small></h1>
+    <div class="toolbar">
+      <button class="btn" onclick="loadExample()">加载示例</button>
+      <button class="btn" onclick="clearAll()">清空</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+  <div id="cal-pop" class="cal-pop hidden"></div>
+
+  <div class="card">
+    <h2>① 基础配置</h2>
+    <div class="grid-form">
+      <div><label>开始日期</label>
+        <input type="text" id="start_date" readonly class="datefield" onclick="openCal('start_date')" onchange="onDatesChange()"></div>
+      <div><label>结束日期</label>
+        <input type="text" id="end_date" readonly class="datefield" onclick="openCal('end_date')" onchange="onDatesChange()"></div>
+      <div><label>节假日 / 停工日</label>
+        <input type="text" id="holidays" placeholder="点下方日期条选择,如 10-01, 10-02" readonly
+               onclick="toggleHolidayPicker(event)" style="cursor:pointer"></div>
+      <div><label>最大连续上班天数</label><input type="number" id="max_consecutive_days" value="5" min="1"></div>
+      <div><label>两班最小休息(小时)</label><input type="number" id="min_rest_hours" value="11" min="0" step="0.5"></div>
+      <div><label>每周工时上限</label><input type="number" id="max_hours_per_week" value="40" min="1"></div>
+      <div><label>求解时限(秒)</label><input type="number" id="max_solve_seconds" value="10" min="1" max="120"></div>
+    </div>
+    <div id="holiday-picker" class="holiday-picker hidden">
+      <span class="muted">点击日期切换节假日(置灰的日期无任何班次):</span>
+      <div id="holiday-chips" class="chips"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 员工</h2>
+    <div class="scroll-x">
+    <table id="emp-table">
+      <thead><tr><th>姓名</th><th>员工ID(唯一)</th><th>技能(逗号分隔)</th><th>周工时上限(可选)</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <p><button class="btn btn-sm btn-link" onclick="addEmployeeRow()">+ 添加员工</button></p>
+  </div>
+
+  <div class="card">
+    <h2>③ 班次类型</h2>
+    <div class="scroll-x">
+    <table id="shift-table">
+      <thead><tr><th>班次ID</th><th>开始</th><th>结束</th><th>夜班</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <p><button class="btn btn-sm btn-link" onclick="addShiftRow()">+ 添加班次</button></p>
+    <p class="muted">班次着色规则:含"早"或 early → 绿色;含"晚"或 late → 黄色;勾选夜班 → 深蓝。</p>
+  </div>
+
+  <div class="card">
+    <h2>④ 每日覆盖需求</h2>
+    <div class="quickfill">
+      <span class="muted" style="white-space:nowrap; align-self:center">统一设置:</span>
+      <div id="quickfill-row" class="quickfill-fields"></div>
+      <button class="btn btn-sm" onclick="applyQuickFill()" style="white-space:nowrap">应用到全部日期</button>
+      <button class="btn btn-sm btn-link" onclick="clearAllCoverage()" style="white-space:nowrap">清空全部</button>
+    </div>
+    <p class="muted">按班次统一填一次 → "应用到全部日期";个别天不同再单独改格子。每格 "最少-最多" (如 2-3),只填数字=固定人数,留空=当天不排此班。节假日列自动禁用。</p>
+    <div class="scroll-x">
+      <table id="coverage-table"></table>
+    </div>
+  </div>
+
+  <div class="cols-2">
+    <div class="card">
+      <h2>⑤ 休假申请</h2>
+      <p class="muted">每行一条:员工ID, 第几天(0=周一), hard 或 soft</p>
+      <textarea id="timeoff" rows="5" placeholder="e1, 5, hard&#10;e2, 6, soft"></textarea>
+    </div>
+    <div class="card">
+      <h2>⑥ 班次偏好</h2>
+      <p class="muted">每行一条:员工ID, 班次ID, 权重(≥1)</p>
+      <textarea id="preferences" rows="5" placeholder="e2, early, 3&#10;e4, night, 1"></textarea>
+    </div>
+  </div>
+
+  <div class="solve-bar">
+    <button class="btn btn-primary" id="solve-btn" onclick="solveNow()">⚡ 开始求解</button>
+  </div>
+
+  <div id="result" class="hidden">
+    <div class="card">
+      <h2>排班结果 <span id="result-meta" class="muted"></span></h2>
+      <div class="scroll-x">
+        <table class="result-table" id="schedule-table"></table>
+      </div>
+    </div>
+    <div class="card">
+      <h2>公平性统计</h2>
+      <div class="scroll-x">
+        <table class="stats-table" id="stats-table"></table>
+      </div>
+      <p class="muted" id="fairness-summary"></p>
+      <p><button class="btn btn-sm" onclick="exportCsv()">导出 CSV</button></p>
+    </div>
+  </div>
+</div>
+
+<script>
+const DAY_NAMES = ['周一','周二','周三','周四','周五','周六','周日'];
+const $ = id => document.getElementById(id);
+
+// ------------------------------------------------------------ date range
+function fmtDate(dt) {  // Date → "YYYY-MM-DD" local
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+function defaultRange() {  // next Monday, 14 days out
+  const s = new Date();
+  const add = (8 - s.getDay()) % 7 || 7;  // next Monday (getDay: 0=Sun)
+  s.setDate(s.getDate() + add);
+  const e = new Date(s); e.setDate(e.getDate() + 13);
+  return [fmtDate(s), fmtDate(e)];
+}
+function numDays() {
+  const s = $('start_date').value, e = $('end_date').value;
+  if (!s || !e) return 0;
+  const n = Math.round((new Date(e) - new Date(s)) / 86400000) + 1;
+  return (n >= 1 && n <= 62) ? n : 0;
+}
+function dayDate(d) {  // day index → Date
+  const dt = new Date($('start_date').value + 'T00:00:00');
+  dt.setDate(dt.getDate() + d);
+  return dt;
+}
+function dayLabel(d) {  // "8/1 周五" (+week marker)
+  const dt = dayDate(d);
+  return `${dt.getMonth()+1}/${dt.getDate()} ${DAY_NAMES[dt.getDay() === 0 ? 6 : dt.getDay()-1]}`;
+}
+let holidays = new Set();  // "YYYY-MM-DD" strings
+function isHoliday(d) { return holidays.has(fmtDate(dayDate(d))); }
+function holidayIndices() {
+  const out = [];
+  for (let d = 0; d < numDays(); d++) if (isHoliday(d)) out.push(d);
+  return out;
+}
+function onDatesChange() {
+  // keep holidays within the new range
+  const valid = new Set();
+  for (let d = 0; d < numDays(); d++) valid.add(fmtDate(dayDate(d)));
+  holidays = new Set([...holidays].filter(h => valid.has(h)));
+  renderCoverage(); save();
+}
+function toggleHolidayPicker(ev) { $('holiday-picker').classList.toggle('hidden'); }
+
+// ------------------------------------------------------------ custom calendar
+let calTarget = null;      // 'start_date' | 'end_date'
+let calMonth = null;       // first day of displayed month
+
+function openCal(targetId) {
+  calTarget = targetId;
+  const cur = $(calTarget).value;
+  calMonth = cur ? new Date(cur + 'T00:00:00') : new Date();
+  calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth(), 1);
+  renderCal();
+  const pop = $('cal-pop');
+  pop.classList.remove('hidden');
+  const el = $(calTarget).getBoundingClientRect();
+  const w = 288 + 10, h = 340;
+  let x = Math.min(el.left, window.innerWidth - w - 12);
+  let y = el.bottom + 8;
+  if (y + h > window.innerHeight) y = Math.max(10, el.top - h - 8);
+  pop.style.left = x + 'px'; pop.style.top = y + 'px';
+}
+
+function closeCal() { $('cal-pop').classList.add('hidden'); calTarget = null; }
+
+function calShiftMonth(n) {
+  calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + n, 1);
+  renderCal();
+}
+
+function renderCal() {
+  const y = calMonth.getFullYear(), m = calMonth.getMonth();
+  const todayIso = fmtDate(new Date());
+  const selIso = calTarget ? $(calTarget).value : '';
+  // leading blanks: Mon-first grid
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7;
+  const dim = new Date(y, m + 1, 0).getDate();
+  let cells = '<span class="cal-wd">一</span><span class="cal-wd">二</span><span class="cal-wd">三</span><span class="cal-wd">四</span><span class="cal-wd">五</span><span class="cal-wd sat">六</span><span class="cal-wd sun">日</span>';
+  for (let i = 0; i < lead; i++) cells += '<span class="cal-d dim"></span>';
+  for (let d = 1; d <= dim; d++) {
+    const dt = new Date(y, m, d);
+    const iso = fmtDate(dt);
+    const wd = dt.getDay();
+    const cls = ['cal-d'];
+    if (wd === 0 || wd === 6) cls.push('wkend');
+    if (holidays.has(iso)) cls.push('hol');
+    if (iso === todayIso) cls.push('today');
+    if (iso === selIso) cls.push('sel');
+    cells += `<span class="${cls.join(' ')}" onclick="pickCal('${iso}')">${d}</span>`;
+  }
+  $('cal-pop').innerHTML = `
+    <div class="cal-head">
+      <button class="cal-nav" onclick="calShiftMonth(-1)">‹</button>
+      <span class="cal-title">${y} 年 ${m + 1} 月</span>
+      <button class="cal-nav" onclick="calShiftMonth(1)">›</button>
+    </div>
+    <div class="cal-grid">${cells}</div>
+    <div class="cal-foot">金色 · = 节假日</div>`;
+}
+
+function pickCal(iso) {
+  $(calTarget).value = iso;
+  closeCal();
+  onDatesChange();
+}
+
+document.addEventListener('click', ev => {
+  const pop = $('cal-pop');
+  if (pop.classList.contains('hidden')) return;
+  // check geometry, not DOM containment: renderCal() may have detached the
+  // original target node (e.g. the ‹ › buttons), making contains() unreliable
+  const r = pop.getBoundingClientRect();
+  const inside = ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+  if (!inside && !ev.target.closest('.datefield')) closeCal();
+});
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeCal(); });
+function renderHolidayPicker() {
+  const box = $('holiday-chips');
+  let html = '';
+  for (let d = 0; d < numDays(); d++) {
+    const iso = fmtDate(dayDate(d));
+    const on = holidays.has(iso);
+    html += `<span class="chip ${on ? 'on' : ''}" data-hol="${iso}" onclick="toggleHoliday('${iso}')">${dayLabel(d).replace(/ [^ ]+$/, '')}<span class="wd">${DAY_NAMES[dayDate(d).getDay() === 0 ? 6 : dayDate(d).getDay()-1]}</span></span>`;
+  }
+  box.innerHTML = html || '<span class="muted">请先选择开始/结束日期</span>';
+  const list = [...holidays].map(h => h.slice(5)).join(', ');
+  $('holidays').value = list;
+}
+function toggleHoliday(iso) {
+  holidays.has(iso) ? holidays.delete(iso) : holidays.add(iso);
+  renderHolidayPicker(); renderCoverage(); save();
+}
+
+// ------------------------------------------------------------ employees
+function addEmployeeRow(emp = {}) {
+  const tb = $('emp-table').tBodies[0];
+  const tr = tb.insertRow();
+  tr.innerHTML = `
+    <td><input type="text" placeholder="张伟" value="${emp.name || ''}"></td>
+    <td><input type="text" placeholder="e1" value="${emp.id || nextId('emp')}"></td>
+    <td><input type="text" placeholder="cpr, supervisor" value="${(emp.skills || []).join(', ')}"></td>
+    <td><input type="number" placeholder="默认全局" min="0" value="${emp.max_hours_per_week ?? ''}"></td>
+    <td class="row-actions"><button class="btn btn-sm" onclick="this.closest('tr').remove(); save()">✕</button></td>`;
+  tr.querySelectorAll('input').forEach(i => i.addEventListener('change', save));
+}
+function nextId(prefix) {
+  const n = document.querySelectorAll(`#${prefix}-table tbody tr`).length + 1;
+  return `${prefix === 'emp' ? 'e' : 'shift'}${n}`;
+}
+
+// ------------------------------------------------------------ shifts
+function addShiftRow(s = {}) {
+  const tb = $('shift-table').tBodies[0];
+  const tr = tb.insertRow();
+  tr.innerHTML = `
+    <td><input type="text" placeholder="early" value="${s.id || ''}"></td>
+    <td><input type="time" value="${s.start || '08:00'}"></td>
+    <td><input type="time" value="${s.end || '16:00'}"></td>
+    <td><input type="checkbox" ${s.is_night ? 'checked' : ''}></td>
+    <td class="row-actions"><button class="btn btn-sm" onclick="this.closest('tr').remove(); renderCoverage(); save()">✕</button></td>`;
+  tr.querySelectorAll('input').forEach(i => i.addEventListener('change', () => { renderCoverage(); save(); }));
+}
+
+// ------------------------------------------------------------ coverage grid
+function getShifts() {
+  return [...$('shift-table').tBodies[0].rows].map(tr => ({
+    id: tr.cells[0].querySelector('input').value.trim(),
+    start: tr.cells[1].querySelector('input').value,
+    end: tr.cells[2].querySelector('input').value,
+    is_night: tr.cells[3].querySelector('input').checked,
+  })).filter(s => s.id);
+}
+
+function renderCoverage() {
+  const n = numDays();
+  const shifts = getShifts();
+  const prev = readCoverage();  // preserve entered values
+  const tbl = $('coverage-table');
+  if (!n) { tbl.innerHTML = '<tbody><tr><td class="muted" style="text-align:left">请先选择开始/结束日期</td></tr></tbody>'; return; }
+  let html = '<thead><tr><th>班次 \\ 日期</th>';
+  for (let d = 0; d < n; d++)
+    html += `<th class="${isHoliday(d) ? 'holiday' : ''}">${dayLabel(d)}${isHoliday(d) ? ' 假' : ''}</th>`;
+  html += '</tr></thead><tbody>';
+  for (const s of shifts) {
+    html += `<tr><th>${s.id}${s.is_night ? ' 🌙' : ''}</th>`;
+    for (let d = 0; d < n; d++) {
+      const v = isHoliday(d) ? '' : (prev[`${s.id}|${d}`] ?? '');
+      const cls = isHoliday(d) ? 'holiday' : '';
+      html += `<td class="${cls}"><input type="text" data-cov="${s.id}|${d}" value="${v}" placeholder="${isHoliday(d) ? '假' : '-'}" ${isHoliday(d) ? 'disabled' : ''}></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  tbl.innerHTML = html;
+  tbl.querySelectorAll('input:not([disabled])').forEach(i => i.addEventListener('change', save));
+  renderQuickFill();
+}
+
+function readCoverage() {
+  const out = {};
+  document.querySelectorAll('[data-cov]').forEach(i => out[i.dataset.cov] = i.value.trim());
+  return out;
+}
+
+function fillAllWeeks() {
+  const n = numDays();
+  if (!n) return showBanner('warn', '⚠ 请先选择开始/结束日期');
+  const cov = readCoverage();
+  const shifts = getShifts().map(s => s.id);
+  let filled = 0;
+  for (const sid of shifts) {
+    for (let d = 7; d < n; d++) {
+      const src = d % 7;
+      const key = `${sid}|${d}`, from = `${sid}|${src}`;
+      if (isHoliday(d)) continue;
+      if (cov[key] === '' && cov[from] !== undefined) { cov[key] = cov[from]; filled++; }
+    }
+  }
+  document.querySelectorAll('[data-cov]').forEach(i => {
+    const v = cov[i.dataset.cov];
+    if (v !== undefined && !i.disabled) i.value = v;
+  });
+  save();
+  showBanner('ok', `✓ 已按第一周填充后续周(${filled} 格),节假日保持为空`);
+}
+
+// per-shift uniform quick fill
+function renderQuickFill() {
+  const box = $('quickfill-row');
+  box.innerHTML = getShifts().map(s =>
+    `<span class="qf-item"><label>${s.id}${s.is_night ? '🌙' : ''}</label>
+     <input type="text" data-qf="${s.id}" placeholder="2-3"></span>`
+  ).join('') || '<span class="muted">先添加班次</span>';
+  box.querySelectorAll('input').forEach(i => i.addEventListener('keydown',
+    ev => { if (ev.key === 'Enter') applyQuickFill(); }));
+}
+
+function applyQuickFill() {
+  const n = numDays();
+  if (!n) return showBanner('warn', '⚠ 请先选择开始/结束日期');
+  let applied = 0;
+  document.querySelectorAll('[data-qf]').forEach(qf => {
+    const v = qf.value.trim();
+    const sid = qf.dataset.qf;
+    if (!v) return;
+    if (parseCoverageCell(v) === undefined)
+      throw_show(`格式错误 "${v}" — 应为 "2-3" 或 "2"`);
+    for (let d = 0; d < n; d++) {
+      if (isHoliday(d)) continue;
+      const cell = document.querySelector(`[data-cov="${sid}|${d}"]`);
+      if (cell && !cell.disabled) { cell.value = v; applied++; }
+    }
+  });
+  save();
+  showBanner('ok', `✓ 已应用统一覆盖到 ${applied} 格(节假日除外)`);
+}
+
+function throw_show(msg) { showBanner('err', '⚠ ' + msg); throw new Error(msg); }
+
+function clearAllCoverage() {
+  document.querySelectorAll('[data-cov]').forEach(i => { if (!i.disabled) i.value = ''; });
+  save();
+  showBanner('ok', '✓ 已清空所有覆盖格(节假日列不受影响)');
+}
+
+function parseCoverageCell(v) {
+  // "2-3" → [2,3]; "2" → [2,2]; "" → null
+  if (!v) return null;
+  const m = v.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+  if (!m) return undefined;  // parse error
+  const lo = +m[1], hi = m[2] === undefined ? lo : +m[2];
+  return [lo, hi];
+}
+
+// ------------------------------------------------------------ collect payload
+function collectPayload() {
+  const employees = [...$('emp-table').tBodies[0].rows].map(tr => ({
+    id: tr.cells[1].querySelector('input').value.trim(),
+    name: tr.cells[0].querySelector('input').value.trim(),
+    skills: tr.cells[2].querySelector('input').value.split(',').map(s => s.trim()).filter(Boolean),
+    max_hours_per_week: tr.cells[3].querySelector('input').value || null,
+  })).filter(e => e.id && e.name);
+
+  const shifts = getShifts();
+
+  const n = numDays();
+  if (!n) throw new Error('请先选择开始/结束日期(范围 1-62 天)');
+
+  const coverage = [];
+  const cov = readCoverage();
+  for (const s of shifts) {
+    for (let d = 0; d < n; d++) {
+      if (isHoliday(d)) continue;  // holidays: no coverage, no shifts
+      const parsed = parseCoverageCell(cov[`${s.id}|${d}`]);
+      if (parsed === undefined) throw new Error(`覆盖需求格式错误: "${cov[`${s.id}|${d}`]}" (${dayLabel(d)} 班次 ${s.id}) — 应为 "2-3" 或 "2"`);
+      if (parsed) coverage.push({ day: d, shift_id: s.id, min_staff: parsed[0], max_staff: parsed[1] });
+    }
+  }
+
+  const time_off = $('timeoff').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const [id, day, hard] = l.split(',').map(x => (x || '').trim());
+    if (!id || day === '') throw new Error(`休假格式错误: "${l}" — 应为 "e1, 5, hard"`);
+    return { employee_id: id, day: +day, hard: (hard || 'hard').toLowerCase() !== 'soft' };
+  });
+
+  const preferences = $('preferences').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const [id, sid, w] = l.split(',').map(x => (x || '').trim());
+    if (!id || !sid) throw new Error(`偏好格式错误: "${l}" — 应为 "e2, early, 3"`);
+    return { employee_id: id, shift_id: sid, weight: +(w || 1) };
+  });
+
+  return {
+    num_days: n,
+    start_date: $('start_date').value || null,
+    holidays: [...holidays],
+    employees, shifts, coverage, time_off, preferences,
+    constraints: {
+      max_consecutive_days: +$('max_consecutive_days').value,
+      min_rest_hours: +$('min_rest_hours').value,
+      max_hours_per_week: +$('max_hours_per_week').value,
+    },
+    max_solve_seconds: +$('max_solve_seconds').value,
+  };
+}
+
+// ------------------------------------------------------------ solve
+let lastResponse = null;
+
+async function solveNow() {
+  let payload;
+  try { payload = collectPayload(); }
+  catch (e) { return showBanner('err', '⚠ ' + e.message); }
+
+  if (!payload.employees.length) return showBanner('err', '⚠ 请先添加员工');
+  if (!payload.shifts.length) return showBanner('err', '⚠ 请先添加班次');
+  if (!payload.coverage.length) return showBanner('err', '⚠ 请先填写覆盖需求');
+
+  $('solve-btn').disabled = true;
+  $('solve-btn').textContent = '求解中…';
+  hideBanner();
+
+  try {
+    // pre-validate
+    const vr = await fetch('/api/scheduling/validate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+    if (vr.ok) {
+      const v = await vr.json();
+      if (!v.ok) showBanner('warn', '⚠ 可能不可行: ' + v.warnings[0] + ' — 仍尝试求解…');
+    }
+
+    const r = await fetch('/api/scheduling/solve', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      const msg = err.detail?.msg || err.detail || JSON.stringify(err.detail);
+      return showBanner('err', '⚠ 输入错误 (HTTP ' + r.status + '): ' + msg);
+    }
+    lastResponse = await r.json();
+    renderResult(payload, lastResponse);
+    save();
+  } catch (e) {
+    showBanner('err', '⚠ 请求失败: ' + e.message);
+  } finally {
+    $('solve-btn').disabled = false;
+    $('solve-btn').textContent = '⚡ 开始求解';
+  }
+}
+
+// ------------------------------------------------------------ render result
+function cellClass(shiftId, isNight) {
+  const s = shiftId.toLowerCase();
+  if (isNight || s.includes('night') || s.includes('夜')) return 'cell-night';
+  if (s.includes('late') || s.includes('晚')) return 'cell-late';
+  if (s.includes('early') || s.includes('早') || s.includes('day')) return 'cell-early';
+  return '';
+}
+
+function renderResult(payload, resp) {
+  $('result').classList.remove('hidden');
+
+  if (resp.status === 'INFEASIBLE' || resp.status === 'UNKNOWN') {
+    $('schedule-table').innerHTML = '';
+    $('stats-table').innerHTML = '';
+    $('fairness-summary').textContent = '';
+    return showBanner('err', `⚠ ${resp.status === 'INFEASIBLE' ? '无可行解' : '未在时限内找到解'} — ${resp.message}`);
+  }
+
+  showBanner('ok', `✓ 求解成功 · 状态 ${resp.status} · ${resp.solve_time_ms.toFixed(0)}ms`);
+  $('result-meta').textContent = `· ${resp.assignments.length} 个班次 · ${(resp.solve_time_ms).toFixed(0)}ms`;
+
+  const n = payload.num_days;
+  const shifts = Object.fromEntries(payload.shifts.map(s => [s.id, s]));
+  const byEmp = {};
+  for (const a of resp.assignments) (byEmp[a.employee_id] ??= {})[a.day] = a.shift_id;
+
+  let html = '<thead><tr><th>员工 \\ 日期</th>';
+  for (let d = 0; d < n; d++)
+    html += `<th class="${isHoliday(d) ? 'holiday' : ''}">${dayLabel(d)}</th>`;
+  html += '<th>工时</th></tr></thead><tbody>';
+  const statsById = Object.fromEntries(resp.stats.map(s => [s.employee_id, s]));
+
+  for (const e of payload.employees) {
+    html += `<tr><th>${e.name}</th>`;
+    for (let d = 0; d < n; d++) {
+      const sid = byEmp[e.id]?.[d];
+      if (sid) {
+        const cls = cellClass(sid, shifts[sid]?.is_night);
+        html += `<td class="${cls}">${sid}</td>`;
+      } else if (isHoliday(d)) {
+        html += '<td class="holiday">假</td>';
+      } else {
+        html += '<td class="cell-rest">休</td>';
+      }
+    }
+    const st = statsById[e.id];
+    html += `<td>${st ? st.total_hours.toFixed(1) + 'h' : '-'}</td></tr>`;
+  }
+  html += '</tbody>';
+  $('schedule-table').innerHTML = html;
+
+  // stats table
+  let sh = '<thead><tr><th>员工</th><th>总工时</th><th>班次数</th><th>周末班</th><th>夜班</th><th>偏好班</th></tr></thead><tbody>';
+  for (const s of resp.stats)
+    sh += `<tr><td>${s.name}</td><td>${s.total_hours.toFixed(1)}h</td><td>${s.shift_count}</td><td>${s.weekend_shifts}</td><td>${s.night_shifts}</td><td>${s.preferred_shifts}</td></tr>`;
+  const hrs = resp.stats.map(s => s.total_hours);
+  const wk = resp.stats.map(s => s.weekend_shifts);
+  const nt = resp.stats.map(s => s.night_shifts);
+  sh += `<tr><th>差距 (max−min)</th><th>${(Math.max(...hrs)-Math.min(...hrs)).toFixed(1)}h</th><th>-</th><th>${Math.max(...wk)-Math.min(...wk)}</th><th>${Math.max(...nt)-Math.min(...nt)}</th><th>-</th></tr>`;
+  sh += '</tbody>';
+  $('stats-table').innerHTML = sh;
+}
+
+function exportCsv() {
+  if (!lastResponse || !lastResponse.assignments.length) return;
+  const rows = [['employee_id', 'day', 'shift_id']];
+  for (const a of lastResponse.assignments) rows.push([a.employee_id, a.day, a.shift_id]);
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'schedule.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ------------------------------------------------------------ banners
+function showBanner(kind, text) { const b = $('banner'); b.className = `banner ${kind}`; b.textContent = text; }
+function hideBanner() { $('banner').className = 'banner hidden'; }
+
+// ------------------------------------------------------------ persistence
+const LS_KEY = 'lp-lab-input';
+function save() {
+  try {
+    const payload = collectPayloadSafe();
+    if (payload) {
+      payload.holidays = [...holidays];
+      localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    }
+  } catch {}
+}
+function collectPayloadSafe() { try { return collectPayload(); } catch { return null; } }
+
+function restore() {
+  const raw = localStorage.getItem(LS_KEY);
+  if (!raw) return false;
+  try {
+    const p = JSON.parse(raw);
+    if (!p.employees?.length) return false;
+    const [ds, de] = p.start_date ? [p.start_date, endFromStart(p.start_date, p.num_days)] : defaultRange();
+    $('start_date').value = ds;
+    $('end_date').value = de;
+    $('max_consecutive_days').value = p.constraints.max_consecutive_days;
+    $('min_rest_hours').value = p.constraints.min_rest_hours;
+    $('max_hours_per_week').value = p.constraints.max_hours_per_week;
+    $('max_solve_seconds').value = p.max_solve_seconds;
+    p.employees.forEach(e => addEmployeeRow(e));
+    p.shifts.forEach(s => addShiftRow(s));
+    const savedHolidays = new Set(p.holidays || []);
+    holidays = new Set([...savedHolidays].filter(h => {
+      const dt = new Date(h + 'T00:00:00');
+      return dt >= new Date(ds + 'T00:00:00') && dt <= new Date(de + 'T00:00:00');
+    }));
+    renderCoverage();
+    renderHolidayPicker();
+    const cov = Object.fromEntries(p.coverage.map(c => [`${c.shift_id}|${c.day}`, `${c.min_staff}${c.max_staff !== c.min_staff ? '-' + c.max_staff : ''}`]));
+    document.querySelectorAll('[data-cov]').forEach(i => { if (cov[i.dataset.cov] !== undefined && !i.disabled) i.value = cov[i.dataset.cov]; });
+    $('timeoff').value = (p.time_off || []).map(t => `${t.employee_id}, ${t.day}, ${t.hard ? 'hard' : 'soft'}`).join('\n');
+    $('preferences').value = (p.preferences || []).map(x => `${x.employee_id}, ${x.shift_id}, ${x.weight}`).join('\n');
+    return true;
+  } catch { return false; }
+}
+function endFromStart(startIso, n) {
+  const dt = new Date(startIso + 'T00:00:00');
+  dt.setDate(dt.getDate() + n - 1);
+  return fmtDate(dt);
+}
+
+// ------------------------------------------------------------ example
+function loadExample() {
+  clearAll(false);
+  const [ds, de] = defaultRange();
+  $('start_date').value = ds;
+  $('end_date').value = de;
+  $('max_consecutive_days').value = '5';
+  $('min_rest_hours').value = '11';
+  $('max_hours_per_week').value = '40';
+
+  const emps = [
+    { id: 'e1', name: '张伟', skills: ['supervisor', 'cpr'] },
+    { id: 'e2', name: '李娜', skills: ['cpr'] },
+    { id: 'e3', name: '王芳', skills: ['cpr'] },
+    { id: 'e4', name: '刘强', skills: [] },
+    { id: 'e5', name: '陈静', skills: ['supervisor'] },
+    { id: 'e6', name: '赵磊', skills: [] },
+  ];
+  emps.forEach(e => addEmployeeRow(e));
+
+  const shifts = [
+    { id: 'early', start: '08:00', end: '16:00' },
+    { id: 'late', start: '16:00', end: '00:00' },
+    { id: 'night', start: '00:00', end: '08:00', is_night: true },
+  ];
+  shifts.forEach(s => addShiftRow(s));
+  holidays = new Set();  // no holidays in the demo scenario
+  renderCoverage();
+  renderHolidayPicker();
+
+  const cov = {};
+  for (let d = 0; d < numDays(); d++) {
+    const dt = dayDate(d);
+    const wknd = dt.getDay() === 0 || dt.getDay() === 6;
+    cov[`early|${d}`] = '2-3';
+    cov[`late|${d}`] = wknd ? '2-2' : '1-2';
+    cov[`night|${d}`] = '1-1';
+  }
+  // demo holiday: mid-range public holiday, e.g. 10th day off
+  if (numDays() > 10) {
+    const holIso = fmtDate(dayDate(10));
+    holidays = new Set([holIso]);
+    cov[`early|10`] = ''; cov[`late|10`] = ''; cov[`night|10`] = '';
+    renderCoverage();
+    renderHolidayPicker();
+    document.querySelectorAll('[data-cov]').forEach(i => { if (cov[i.dataset.cov]) i.value = cov[i.dataset.cov]; });
+  }
+  document.querySelectorAll('[data-cov]').forEach(i => { if (cov[i.dataset.cov]) i.value = cov[i.dataset.cov]; });
+
+  $('timeoff').value = 'e1, 5, hard\ne4, 6, soft';
+  $('preferences').value = 'e2, early, 3\ne3, early, 2\ne5, late, 1';
+  save();
+  hideBanner();
+}
+
+function clearAll(confirmFirst = true) {
+  if (confirmFirst && !confirm('确定清空所有输入?')) return;
+  localStorage.removeItem(LS_KEY);
+  $('emp-table').tBodies[0].innerHTML = '';
+  $('shift-table').tBodies[0].innerHTML = '';
+  $('timeoff').value = '';
+  $('preferences').value = '';
+  holidays = new Set();
+  $('result').classList.add('hidden');
+  hideBanner();
+  renderCoverage();
+  renderHolidayPicker();
+}
+
+// ------------------------------------------------------------ init
+if (!restore()) loadExample();
+</script>
+</body>
+</html>
