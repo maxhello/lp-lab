@@ -1,0 +1,4 @@
+# The UI is a single self-contained HTML file (inlined CSS/JS); its byte size
+# dominates GitHub's language stats and mislabels this Python/OR-Tools project
+# as HTML. Exclude it from linguist stats.
+static/*.html linguist-vendored=true
