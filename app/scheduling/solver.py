@@ -7,35 +7,81 @@ All durations are integer minutes. Day 0 is Monday.
 from __future__ import annotations
 
 import time
+from typing import Optional
 
 from ortools.sat.python import cp_model
 
 from .models import Assignment, SolveRequest, SolveResponse
-from .stats import compute_stats
+from .stats import compute_shortfalls, compute_stats
 
 # Generous upper bound for spread variables (31 days of minutes).
 _UB = 44640
 
 
-def _forbidden_pairs(req: SolveRequest) -> set[tuple[str, str]]:
-    """Shift pairs (s1, s2) violating min rest when s1 is on day d, s2 on day d+1.
+def _forbidden_pairs(req: SolveRequest) -> set[tuple[int, str, str]]:
+    """Triples (gap, s1, s2) violating min rest when s1 is on day d, s2 on day d+gap.
 
-    A shift occupies [d*1440 + start, d*1440 + start + duration]. The next day's
-    shift starts at (d+1)*1440 + start2, so the rest in between is
-    1440 + start2 - start1 - duration1 (minutes; duration already handles midnight).
+    A shift occupies [d*1440 + start, d*1440 + start + duration]. A shift on day
+    d+gap starts at (d+gap)*1440 + start2, so the rest in between is
+    gap*1440 + start2 - start1 - duration1 (minutes; duration already handles midnight).
+    gap=1 covers normal rosters; gap=2 matters when a long evening shift (≥ ~14h)
+    leaves less than min rest before an early shift two days later.
     """
     rest_min = int(round(req.constraints.min_rest_hours * 60))
-    bad: set[tuple[str, str]] = set()
+    bad: set[tuple[int, str, str]] = set()
     for s1 in req.shifts:
         for s2 in req.shifts:
-            rest = 1440 + s2.start_min - s1.start_min - s1.duration_min
-            if rest < rest_min:
-                bad.add((s1.id, s2.id))
+            gap = 1
+            # Rest grows by 1440 per gap; collect every gap still in violation.
+            while gap * 1440 + s2.start_min - s1.start_min - s1.duration_min < rest_min:
+                bad.add((gap, s1.id, s2.id))
+                gap += 1
+                if gap >= req.num_days:
+                    break
     return bad
+
+
+def _fixed_conflict_message(req: SolveRequest) -> Optional[str]:
+    """Targeted INFEASIBLE reason caused by fixed_assignments alone, if any."""
+    fixed = {(a.employee_id, a.day, a.shift_id) for a in req.fixed_assignments}
+    if not fixed:
+        return None
+
+    hard_off = {(t.employee_id, t.day) for t in req.time_off if t.hard}
+    per_emp_day: dict[tuple[str, int], set[str]] = {}
+    for eid, d, sid in fixed:
+        if (eid, d) in hard_off:
+            return (f"Fixed assignment for '{eid}' on day {d} conflicts with "
+                    f"their hard time off.")
+        per_emp_day.setdefault((eid, d), set()).add(sid)
+
+    if req.constraints.one_shift_per_day:
+        for (eid, d), sids in per_emp_day.items():
+            if len(sids) > 1:
+                return (f"Fixed assignments pin {len(sids)} shifts on day {d} for "
+                        f"'{eid}' ({', '.join(sorted(sids))}) but one_shift_per_day "
+                        f"is enabled.")
+
+    for gap, s1, s2 in _forbidden_pairs(req):
+        for eid, d, sid in fixed:
+            if sid == s1 and (eid, d + gap, s2) in fixed:
+                return (f"Fixed assignments for '{eid}' break min rest: "
+                        f"'{s1}' on day {d} then '{s2}' on day {d + gap}.")
+
+    return None
 
 
 def solve(req: SolveRequest) -> SolveResponse:
     started = time.perf_counter()
+
+    conflict = _fixed_conflict_message(req)
+    if conflict:
+        return SolveResponse(
+            status="INFEASIBLE",
+            message=conflict,
+            solve_time_ms=(time.perf_counter() - started) * 1000,
+        )
+
     model = cp_model.CpModel()
 
     employees = req.employees
@@ -67,13 +113,38 @@ def solve(req: SolveRequest) -> SolveResponse:
                 model.add(sum(day_vars) == w)
                 works[(e.id, d)] = w
 
+    # ------------------------------------------------------ fixed + hints
+    # Pinned assignments the user has already approved (model_validator guarantees
+    # the referenced vars exist).
+    for a in req.fixed_assignments:
+        model.add(assign[(a.employee_id, a.day, a.shift_id)] == 1)
+
+    # Warm start from a previous solution (fixed ones included); stale refs are
+    # advisory and simply skipped.
+    hinted: set[tuple[str, int, str]] = set()
+    for a in [*req.fixed_assignments, *req.hint_assignments]:
+        key = (a.employee_id, a.day, a.shift_id)
+        if key in hinted:
+            continue
+        hinted.add(key)
+        var = assign.get(key)
+        if var is not None:
+            model.add_hint(var, 1)
+
     # ------------------------------------------------------- coverage + skills
+    # min_staff and skill coverage are soft: a dominant per-person penalty makes
+    # the solver staff every slot it can and report what it could not (shortfalls,
+    # recomputed independently in stats), instead of failing the whole request
+    # the moment capacity is short. max_staff stays hard.
+    understaff_vars: list[cp_model.IntVar] = []
     for (d, sid), c in coverage.items():
         slot_vars = [A(e.id, d, sid) for e in employees if (e.id, d, sid) in assign]
-        model.add(sum(slot_vars) >= c.min_staff)
+        staff_slack = model.new_int_var(0, c.min_staff, f"us_{d}_{sid}")
+        model.add(sum(slot_vars) + staff_slack >= c.min_staff)
+        understaff_vars.append(staff_slack)
         if c.max_staff is not None:
             model.add(sum(slot_vars) <= c.max_staff)
-        for skill in c.required_skills:
+        for i, skill in enumerate(c.required_skills):
             qualified = [A(e.id, d, sid) for e in employees
                          if (e.id, d, sid) in assign and skill in e.skills]
             if not qualified:
@@ -82,7 +153,9 @@ def solve(req: SolveRequest) -> SolveResponse:
                     message=(f"No employee has required skill '{skill}' "
                              f"for shift '{sid}' on day {d}."),
                 )
-            model.add(sum(qualified) >= 1)
+            skill_slack = model.new_bool_var(f"sk_us_{d}_{sid}_{i}")
+            model.add(sum(qualified) + skill_slack >= 1)
+            understaff_vars.append(skill_slack)
 
     # ------------------------------------------------------------- one per day
     if constraints.one_shift_per_day:
@@ -113,11 +186,11 @@ def solve(req: SolveRequest) -> SolveResponse:
                 model.add(sum(window) <= max_consec)
 
     # ------------------------------------------------------------- min rest
-    for s1, s2 in _forbidden_pairs(req):
+    for gap, s1, s2 in _forbidden_pairs(req):
         for e in employees:
-            for d in range(num_days - 1):
-                if (e.id, d, s1) in assign and (e.id, d + 1, s2) in assign:
-                    model.add(A(e.id, d, s1) + A(e.id, d + 1, s2) <= 1)
+            for d in range(num_days - gap):
+                if (e.id, d, s1) in assign and (e.id, d + gap, s2) in assign:
+                    model.add(A(e.id, d, s1) + A(e.id, d + gap, s2) <= 1)
 
     # ------------------------------------------------------- weekly caps
     for e in employees:
@@ -142,16 +215,20 @@ def solve(req: SolveRequest) -> SolveResponse:
     # ------------------------------------------------------------- objective
     obj_terms: list = []
 
+    # Understaffing dominates every other term, so slots go short only when forced.
+    if understaff_vars:
+        obj_terms.append(weights.understaff_penalty * sum(understaff_vars))
+
     if soft_penalty_vars and weights.soft_timeoff > 0:
         obj_terms.append(weights.soft_timeoff * sum(soft_penalty_vars))
 
     if weights.preference > 0:
-        pref_vars = [A(p.employee_id, d, p.shift_id)
-                     for p in req.preferences
-                     for d in range(num_days)
-                     if (p.employee_id, d, p.shift_id) in assign]
-        if pref_vars:
-            obj_terms.append(-weights.preference * sum(pref_vars))
+        pref_terms = [p.weight * A(p.employee_id, d, p.shift_id)
+                      for p in req.preferences
+                      for d in range(num_days)
+                      if (p.employee_id, d, p.shift_id) in assign]
+        if pref_terms:
+            obj_terms.append(-weights.preference * sum(pref_terms))
 
     def add_spread(exprs: list, weight: int) -> None:
         """Fairness term: penalise (max − min) of the given per-employee expressions."""
@@ -212,10 +289,13 @@ def solve(req: SolveRequest) -> SolveResponse:
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         if status == cp_model.INFEASIBLE:
+            fixed_note = (" Fixed assignments can also cause this — review them."
+                          if req.fixed_assignments else "")
             return SolveResponse(
                 status="INFEASIBLE",
                 message=("No schedule satisfies all hard constraints. Try lowering "
-                         "min_staff, relaxing rest/hours limits, or adding staff."),
+                         "min_staff, relaxing rest/hours limits, or adding staff."
+                         + fixed_note),
                 solve_time_ms=elapsed_ms,
             )
         msg = (f"No solution found within {req.max_solve_seconds}s. "
@@ -226,10 +306,18 @@ def solve(req: SolveRequest) -> SolveResponse:
                    for (eid, d, sid), var in assign.items() if cp.value(var)]
     assignments.sort(key=lambda a: (a.day, a.shift_id, a.employee_id))
 
+    shortfalls = compute_shortfalls(req, assignments)
+    message = ""
+    if shortfalls:
+        message = (f"Best-effort schedule: {len(shortfalls)} slot(s) understaffed — "
+                   f"see shortfalls for where staff or skills are missing.")
+
     return SolveResponse(
         status="OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
         assignments=assignments,
         stats=compute_stats(req, assignments),
+        shortfalls=shortfalls,
         objective_value=cp.objective_value,
         solve_time_ms=elapsed_ms,
+        message=message,
     )

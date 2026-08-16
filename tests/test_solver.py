@@ -50,18 +50,20 @@ def _recompute_ok(req: SolveRequest, assignments: list[Assignment]) -> list[str]
                 errors.append(f"{e.id} works {run}+ consecutive days ending day {d}")
             prev = d
 
-    # Min rest between consecutive days
+    # Min rest between shifts on any two days (mirrors solver's (gap, s1, s2) rule:
+    # long shifts can leave too little rest even two days apart)
     rest_min = req.constraints.min_rest_hours * 60
     for e in req.employees:
-        for d in range(req.num_days - 1):
-            s1s = per_employee_day.get((e.id, d), [])
-            s2s = per_employee_day.get((e.id, d + 1), [])
-            for s1 in s1s:
-                for s2 in s2s:
-                    sh1, sh2 = shifts[s1], shifts[s2]
-                    rest = 1440 + sh2.start_min - sh1.start_min - sh1.duration_min
-                    if rest < rest_min:
-                        errors.append(f"{e.id} rest violation {s1}(d{d})->{s2}(d{d+1})")
+        for d1 in range(req.num_days):
+            for d2 in range(d1 + 1, req.num_days):
+                for s1 in per_employee_day.get((e.id, d1), []):
+                    for s2 in per_employee_day.get((e.id, d2), []):
+                        sh1, sh2 = shifts[s1], shifts[s2]
+                        rest = ((d2 - d1) * 1440 + sh2.start_min
+                                - sh1.start_min - sh1.duration_min)
+                        if rest < rest_min - 1e-9:
+                            errors.append(
+                                f"{e.id} rest violation {s1}(d{d1})->{s2}(d{d2})")
 
     # Weekly hour caps
     for e in req.employees:
@@ -83,11 +85,83 @@ def test_feasible_scenario_satisfies_all_hard_constraints(small_request):
     assert _recompute_ok(small_request, resp.assignments) == []
 
 
-def test_infeasible_returns_clean_status(infeasible_request):
+def test_understaffed_returns_best_effort(infeasible_request):
+    """min_staff=10 with 5 employees: soft coverage returns a usable schedule
+    plus explicit shortfalls instead of a bare INFEASIBLE."""
     resp = solve(infeasible_request)
+    assert resp.status in ("OPTIMAL", "FEASIBLE"), resp.message
+    assert resp.assignments
+    assert resp.shortfalls
+    assert sum(s.missing_staff for s in resp.shortfalls) > 0
+    assert "Best-effort" in resp.message
+    # Coverage is the only violated rule — every other hard constraint still holds.
+    errors = _recompute_ok(infeasible_request, resp.assignments)
+    assert errors  # capacity really is short
+    assert all(e.startswith("understaffed") for e in errors)
+
+
+def test_rest_constraint_spans_two_day_gap():
+    """24h shift 23:00→23:00 ends 23:00 next day; an 08:00 shift two days later
+    leaves only 1h rest. Adjacent-day checking misses this; the gap rule must not."""
+    from app.scheduling.models import ConstraintsConfig, CoverageRequirement, Employee
+    employees = [Employee(id=f"e{i}", name=f"E{i}") for i in range(1, 4)]
+    shifts = [
+        ShiftType(id="long", start="23:00", end="23:00"),
+        ShiftType(id="early", start="08:00", end="16:00"),
+    ]
+    coverage = [
+        CoverageRequirement(day=0, shift_id="long", min_staff=2, max_staff=2),
+        CoverageRequirement(day=2, shift_id="early", min_staff=1, max_staff=1),
+    ]
+    req = SolveRequest(
+        num_days=3, employees=employees, shifts=shifts, coverage=coverage,
+        constraints=ConstraintsConfig(min_rest_hours=11.0, max_hours_per_week=60),
+    )
+    resp = solve(req)
+    assert resp.status in ("OPTIMAL", "FEASIBLE")
+    assert resp.shortfalls == []
+    long_d0 = {a.employee_id for a in resp.assignments if a.day == 0 and a.shift_id == "long"}
+    early_d2 = {a.employee_id for a in resp.assignments if a.day == 2 and a.shift_id == "early"}
+    assert long_d0 and early_d2
+    assert not (long_d0 & early_d2)  # the two long-shift workers can't take day-2 early
+    assert _recompute_ok(req, resp.assignments) == []
+
+
+def test_fixed_assignments_are_pinned(small_request):
+    data = small_request.model_dump()
+    data["fixed_assignments"] = [
+        {"employee_id": "e3", "day": 2, "shift_id": "night"},
+        {"employee_id": "e1", "day": 4, "shift_id": "late"},
+    ]
+    req = SolveRequest(**data)
+    resp = solve(req)
+    assert resp.status in ("OPTIMAL", "FEASIBLE"), resp.message
+    got = {(a.employee_id, a.day, a.shift_id) for a in resp.assignments}
+    assert ("e3", 2, "night") in got
+    assert ("e1", 4, "late") in got
+    assert _recompute_ok(req, resp.assignments) == []
+
+
+def test_fixed_conflicting_with_hard_timeoff_is_infeasible(small_request):
+    data = small_request.model_dump()
+    data["time_off"] = [{"employee_id": "e1", "day": 3, "hard": True}]
+    data["fixed_assignments"] = [{"employee_id": "e1", "day": 3, "shift_id": "early"}]
+    resp = solve(SolveRequest(**data))
     assert resp.status == "INFEASIBLE"
-    assert resp.assignments == []
-    assert "No schedule" in resp.message or "min_staff" in resp.message
+    assert "hard time off" in resp.message
+
+
+def test_stale_hint_entries_are_ignored(small_request):
+    data = small_request.model_dump()
+    data["hint_assignments"] = [
+        {"employee_id": "e1", "day": 1, "shift_id": "early"},
+        {"employee_id": "ghost", "day": 99, "shift_id": "nope"},
+        {"employee_id": "e2", "day": 2, "shift_id": "late"},
+    ]
+    req = SolveRequest(**data)
+    resp = solve(req)
+    assert resp.status in ("OPTIMAL", "FEASIBLE")
+    assert _recompute_ok(req, resp.assignments) == []
 
 
 def test_hard_timeoff_respected(small_request):

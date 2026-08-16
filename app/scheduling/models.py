@@ -101,12 +101,28 @@ class ObjectiveWeights(BaseModel):
     )
     preference: int = Field(default=1, ge=0)
     soft_timeoff: int = Field(default=50, ge=0)
+    understaff_penalty: int = Field(
+        default=100_000, ge=1,
+        description="Penalty per missing staff member (and per uncovered required skill) "
+                    "per slot: coverage min_staff is soft, so a short-staffed request "
+                    "returns a best-effort schedule with shortfalls listed instead of "
+                    "INFEASIBLE. Keep this large enough to dominate the other objective "
+                    "terms so slots are only left understaffed when unavoidable.",
+    )
 
 
 class Assignment(BaseModel):
     employee_id: str
     day: int
     shift_id: str
+
+
+class Shortfall(BaseModel):
+    """A coverage slot the best-effort schedule could not fully staff."""
+    day: int
+    shift_id: str
+    missing_staff: int = Field(..., ge=0)
+    missing_skills: list[str] = Field(default_factory=list)
 
 
 class EmployeeStats(BaseModel):
@@ -123,6 +139,7 @@ class SolveResponse(BaseModel):
     status: Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN"]
     assignments: list[Assignment] = Field(default_factory=list)
     stats: list[EmployeeStats] = Field(default_factory=list)
+    shortfalls: list[Shortfall] = Field(default_factory=list)
     objective_value: Optional[float] = None
     solve_time_ms: float = 0.0
     message: str = ""
@@ -139,6 +156,18 @@ class SolveRequest(BaseModel):
     coverage: list[CoverageRequirement] = Field(..., min_length=1)
     time_off: list[TimeOff] = Field(default_factory=list)
     preferences: list[Preference] = Field(default_factory=list)
+    fixed_assignments: list[Assignment] = Field(
+        default_factory=list,
+        description="Pinned assignments (variable forced to 1), e.g. days the user has "
+                    "already approved. Must reference a slot present in coverage; conflicts "
+                    "with hard time off / one-per-day / min rest fail fast with a "
+                    "targeted INFEASIBLE message.",
+    )
+    hint_assignments: list[Assignment] = Field(
+        default_factory=list,
+        description="Warm start (e.g. the previous solution after a small edit). Advisory "
+                    "only: entries referencing unknown employee/shift/day are ignored.",
+    )
     constraints: ConstraintsConfig = Field(default_factory=ConstraintsConfig)
     weights: ObjectiveWeights = Field(default_factory=ObjectiveWeights)
     max_solve_seconds: float = Field(default=10.0, gt=0, le=120.0)
@@ -171,6 +200,19 @@ class SolveRequest(BaseModel):
                 raise ValueError(f"preference references unknown employee '{p.employee_id}'")
             if p.shift_id not in shift_ids:
                 raise ValueError(f"preference references unknown shift '{p.shift_id}'")
+
+        coverage_slots = {(c.day, c.shift_id) for c in self.coverage}
+        for a in self.fixed_assignments:
+            if a.employee_id not in employee_ids:
+                raise ValueError(f"fixed assignment references unknown employee '{a.employee_id}'")
+            if a.shift_id not in shift_ids:
+                raise ValueError(f"fixed assignment references unknown shift '{a.shift_id}'")
+            if not 0 <= a.day < self.num_days:
+                raise ValueError(f"fixed assignment day {a.day} out of range")
+            if (a.day, a.shift_id) not in coverage_slots:
+                raise ValueError(
+                    f"fixed assignment ({a.employee_id}, day {a.day}, '{a.shift_id}') "
+                    f"references a slot with no coverage")
 
         return self
 

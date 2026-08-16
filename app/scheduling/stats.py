@@ -6,7 +6,7 @@ fairness claims without trusting the model that produced them.
 
 from __future__ import annotations
 
-from .models import Assignment, EmployeeStats, SolveRequest
+from .models import Assignment, EmployeeStats, Shortfall, SolveRequest
 
 
 def compute_stats(req: SolveRequest, assignments: list[Assignment]) -> list[EmployeeStats]:
@@ -36,6 +36,28 @@ def compute_stats(req: SolveRequest, assignments: list[Assignment]) -> list[Empl
             st.preferred_shifts += 1
 
     return [stats[e.id] for e in employees.values()]
+
+
+def compute_shortfalls(req: SolveRequest, assignments: list[Assignment]) -> list[Shortfall]:
+    """Recompute coverage shortfalls from raw assignments (same independent-of-solver
+    philosophy as compute_stats): for every coverage slot, how many staff and which
+    required skills could not be covered."""
+    by_slot: dict[tuple[int, str], list[str]] = {}
+    for a in assignments:
+        by_slot.setdefault((a.day, a.shift_id), []).append(a.employee_id)
+    emp_map = {e.id: e for e in req.employees}
+
+    out: list[Shortfall] = []
+    for c in req.coverage:
+        assigned = by_slot.get((c.day, c.shift_id), [])
+        missing_staff = max(0, c.min_staff - len(assigned))
+        missing_skills = [skill for skill in c.required_skills
+                          if not any(skill in emp_map[eid].skills for eid in assigned)]
+        if missing_staff or missing_skills:
+            out.append(Shortfall(day=c.day, shift_id=c.shift_id,
+                                 missing_staff=missing_staff,
+                                 missing_skills=missing_skills))
+    return out
 
 
 def summarize_fairness(stats: list[EmployeeStats]) -> dict:
