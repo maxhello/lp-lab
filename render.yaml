@@ -1,0 +1,8 @@
+# Render 部署配置:https://render.com → New → Web Service → 连接本仓库即自动读取
+services:
+  - type: web
+    name: lp-lab
+    runtime: python
+    plan: free
+    buildCommand: pip install -e .
+    startCommand: uvicorn app.scheduling.api:app --host 0.0.0.0 --port $PORT

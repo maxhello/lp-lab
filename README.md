@@ -140,12 +140,18 @@ pytest
 Tests re-verify every hard constraint by independent recomputation on returned
 assignments — the solver's own claims are not trusted.
 
+## Deploy
+
+- **Render**(免费,推荐):[render.com](https://render.com) → New → Web Service →
+  连接 GitHub 仓库,自动读取 `render.yaml`;此后每次 `git push` 自动部署。
+  免费档 15 分钟无访问会休眠,冷启动约 30~60 秒。
+- **其他平台**(Fly.io / Railway / Koyeb / 自建服务器):根目录已提供 `Dockerfile`。
+
 ## Roadmap
 
 - [ ] Infeasibility explanation (which constraint conflicts)
 - [ ] Multi-week patterns / rotating templates
 - [ ] Employee unavailability date ranges
-- [ ] Docker image
 
 ## License
 
