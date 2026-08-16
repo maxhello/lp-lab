@@ -8,7 +8,8 @@ Define your staff, rules and coverage — get a fair, legal schedule in seconds.
 ## Features
 
 - **Coverage requirements** — min/max headcount per shift per day, plus required skills
-  (e.g. "every late shift needs at least one CPR-certified employee")
+  (e.g. "every late shift needs at least one CPR-certified employee");
+  understaffed input gets a best-effort schedule with shortfalls flagged, not an error
 - **Labor rules** — max consecutive working days, minimum rest between shifts
   (incl. cross-midnight shifts), weekly hour caps (global or per-employee), one shift per day
 - **Fairness** — balanced total hours, even rotation of weekend and night shifts
@@ -23,6 +24,22 @@ uvicorn app.scheduling.api:app --reload
 ```
 
 Open http://127.0.0.1:8000 — click **加载示例** (load example), then **⚡ 开始求解**.
+
+## Docker
+
+A multi-arch image (`linux/amd64`, `linux/arm64`) is built and published to
+GitHub Container Registry on every push:
+
+```bash
+docker run -p 8000:8000 ghcr.io/maxhello/lp-lab:latest
+```
+
+Then open http://127.0.0.1:8000. Or build from source:
+
+```bash
+docker build -t lp-lab .
+docker run -p 8000:8000 lp-lab
+```
 
 ## Web UI
 
@@ -39,10 +56,10 @@ Input is auto-saved to localStorage.
 
 ## REST API
 
-### `POST /api/solve`
+### `POST /api/scheduling/solve`
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/solve \
+curl -X POST http://127.0.0.1:8000/api/scheduling/solve \
   -H 'Content-Type: application/json' \
   -d '{
     "num_days": 7,
@@ -84,14 +101,17 @@ Response:
      "weekend_shifts": 1, "night_shifts": 2, "preferred_shifts": 0}
   ],
   "objective_value": 12.0,
+  "shortfalls": [],
   "solve_time_ms": 24.1,
   "message": ""
 }
 ```
 
 `status` is `OPTIMAL`, `FEASIBLE`, `INFEASIBLE` (check `message` for hints), or `UNKNOWN` (time limit).
+`shortfalls` lists slots that could not be fully staffed (missing people / skills)
+in the best-effort schedule.
 
-### `POST /api/validate`
+### `POST /api/scheduling/validate`
 
 Same body; returns cheap pre-checks (`{"ok": false, "warnings": [...]}`) such as
 "min_staff exceeds the number of skill-qualified employees" — useful to catch
@@ -105,13 +125,14 @@ Each `(employee, day, shift)` triple becomes a boolean variable in a CP-SAT mode
 
 | Rule | Encoding |
 |---|---|
-| Coverage | `min ≤ Σ assigns ≤ max` per slot |
-| Required skill | `Σ qualified-employee assigns ≥ 1` |
+| Coverage | `min ≤ Σ assigns + slack ≤ max` per slot (slack penalised → `shortfalls`) |
+| Required skill | `Σ qualified-employee assigns + slack ≥ 1` |
 | One shift/day | `Σ shift assigns ≤ 1` per employee-day |
 | Consecutive days | sliding-window sum ≤ limit |
-| Min rest | forbidden adjacent-day shift pairs (cross-midnight aware) |
+| Min rest | forbidden `(gap, s1, s2)` shift triples, any day gap (cross-midnight aware) |
 | Weekly cap | `Σ assigns × duration ≤ cap` per 7-day window |
 | Hard time-off | variable fixed to 0 |
+| Fixed assignments | variable fixed to 1 |
 
 The objective minimises (with configurable weights):
 - **fairness**: max−min spread of total hours, weekend-shift counts, night-shift counts
@@ -125,10 +146,10 @@ The objective minimises (with configurable weights):
 
 ## Assumptions
 
-- Day `0` is **Monday**; weekend = days 5 and 6 (`day % 7 ∈ {5, 6}`)
-- Rest is enforced between shifts on **adjacent days** only (exact for shifts < 48h span)
+- Day `0` is **Monday** unless `start_date` is given; weekend follows the calendar weekday
+- Rest is enforced between shifts on any two days (long evening shifts reach two days ahead)
 - Night-shift fairness counts shifts flagged `is_night`
-- Weekly caps apply to each rolling block of 7 days starting at day 0
+- Weekly caps apply to fixed 7-day blocks starting at day 0
 
 ## Development
 
@@ -139,13 +160,6 @@ pytest
 
 Tests re-verify every hard constraint by independent recomputation on returned
 assignments — the solver's own claims are not trusted.
-
-## Deploy
-
-- **Render**(免费,推荐):[render.com](https://render.com) → New → Web Service →
-  连接 GitHub 仓库,自动读取 `render.yaml`;此后每次 `git push` 自动部署。
-  免费档 15 分钟无访问会休眠,冷启动约 30~60 秒。
-- **其他平台**(Fly.io / Railway / Koyeb / 自建服务器):根目录已提供 `Dockerfile`。
 
 ## Roadmap
 
