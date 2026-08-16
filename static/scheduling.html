@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>⚡ LP Lab · 排班求解器</title>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three.module.min.js", "three/addons/": "/vendor/addons/" } }
+</script>
+<link rel="modulepreload" href="/vendor/three.module.min.js">
+<link rel="modulepreload" href="/vendor/addons/controls/OrbitControls.js">
 <style>
   :root {
     --bg: #0b0f1a; --bg-glow: radial-gradient(1200px 600px at 70% -10%, #1e293b55, transparent),
@@ -62,6 +67,7 @@
   .btn-primary:hover { box-shadow: 0 6px 26px #2563eb80; background: linear-gradient(180deg, #4f8ef7, #2b6ef0); }
   .btn-primary:disabled { opacity: .6; cursor: wait; }
   .btn-sm { padding: 3px 10px; font-size: 12px; }
+  .btn-sm.active { border-color: var(--accent); background: var(--accent-soft); }
   .btn-link { background: none; border: 1px dashed var(--border-strong); color: var(--muted); }
   .btn-link:hover { color: var(--text); border-color: var(--accent); background: none; }
   .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -138,8 +144,9 @@
            background: repeating-linear-gradient(90deg, transparent 0, transparent calc(25% - 1px),
                          #1a2438 calc(25% - 1px), #1a2438 25%), #0a0f1b; }
   .bar { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; min-width: 4px;
-         box-shadow: 0 2px 8px #000000b0; transition: filter .15s; }
+         box-shadow: 0 2px 8px #000000b0; transition: filter .15s; cursor: pointer; }
   .bar:hover { filter: brightness(1.3); }
+  .bar.locked { outline: 2px solid #fbbf24; outline-offset: -2px; }
   .bar-early { background: linear-gradient(180deg, #4ade80, #16a34a); }
   .bar-late  { background: linear-gradient(180deg, #fbbf24, #d97706); }
   .bar-night { background: linear-gradient(180deg, #818cf8, #4f46e5); }
@@ -166,6 +173,8 @@
   .gantt-table tbody tr:hover .bar { filter: brightness(1.18); }
   .gantt-table .wsep { border-left: 2px solid var(--border-strong); }
   .gantt-table tfoot td { font-size: 11px; color: var(--muted); padding: 3px 4px; }
+  .gantt-table tfoot td.short { background: var(--err-bg) !important; color: var(--err-fg);
+                                 border-color: var(--err-bd); font-weight: 700; }
 
   /* employee workload cards */
   .emp-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 12px; }
@@ -245,6 +254,27 @@
   .qf-item { display: flex; align-items: center; gap: 6px; }
   .qf-item label { margin: 0; font-size: 12px; }
   .qf-item input { width: 70px; padding: 4px 8px; font-size: 12px; text-align: center; }
+
+  /* ---------- 3D duty chart ---------- */
+  .d3-toolbar { display: flex; justify-content: space-between; align-items: center;
+                gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  #duty3d-wrap { position: relative; height: 480px; border: 1px solid var(--border);
+                 border-radius: 10px; overflow: hidden; background:
+                 radial-gradient(900px 400px at 60% -20%, #1e293b66, transparent), #0a0f1b; }
+  #duty3d-wrap canvas { display: block; }
+  #duty3d-tip { position: absolute; pointer-events: none; background: #0d1524f2;
+                border: 1px solid var(--border-strong); border-radius: 8px;
+                padding: 8px 12px; font-size: 12.5px; z-index: 5; max-width: 280px;
+                box-shadow: 0 8px 24px #000a; line-height: 1.6; white-space: nowrap; }
+  #duty3d-tip b { color: var(--accent); }
+  #duty3d-fallback { position: absolute; inset: 0; display: flex; align-items: center;
+                     justify-content: center; color: var(--muted); font-size: 13px;
+                     padding: 30px; text-align: center; line-height: 1.8;
+                     background: #0a0f1b; }
+  /* ID 选择器 display:flex 会压过 .hidden 的 display:none,必须显式压回 ——
+     否则降级提示永远悬浮在正常渲染的 3D 图上(真实踩过的坑) */
+  #duty3d-fallback.hidden { display: none; }
+  .sw.sw-weekend3d { background: #1e2b45; border: 1px solid #3b82f666; }
 </style>
 </head>
 <body>
@@ -347,6 +377,26 @@
         <table class="gantt-table" id="schedule-table"></table>
       </div>
       <p class="muted" style="margin: 10px 2px 0">每格 = 一天(0 → 24 时,自左向右),色块位置即实际上班时段;悬停查看详情。首列固定,横向滚动看整月。</p>
+      <p class="muted" style="margin: 6px 2px 0">点击色块 🔒 锁定/解锁该班次:锁定的班次重新求解时保持不变;输入未变或上次超时的情况下,上次方案还会作为热启动提示,重解最多快一个数量级。
+        <button class="btn btn-sm btn-link" onclick="unlockAll()">解锁全部</button></p>
+    </div>
+    <div class="card">
+      <h2>每日在岗人数 · 3D 视图</h2>
+      <div class="d3-toolbar">
+        <div class="legend" id="duty3d-legend"></div>
+        <div class="toolbar">
+          <button class="btn btn-sm" id="duty3d-mode-bars" onclick="window.duty3dSetMode && duty3dSetMode('bars')">🧱 班次堆积</button>
+          <button class="btn btn-sm active" id="duty3d-mode-people" onclick="window.duty3dSetMode && duty3dSetMode('people')">🧍 人员站位</button>
+          <span style="width:1px;height:18px;background:var(--border-strong)"></span>
+          <button class="btn btn-sm" onclick="window.duty3dSetView && duty3dSetView('iso')">立体视角</button>
+          <button class="btn btn-sm" onclick="window.duty3dSetView && duty3dSetView('top')">俯视视角</button>
+        </div>
+      </div>
+      <div id="duty3d-wrap">
+        <div id="duty3d-fallback" class="hidden">3D 组件未能加载(WebGL 不可用,或 /vendor 资源缺失)。<br>排班结果与甘特图不受影响,仍完整可用。</div>
+        <div id="duty3d-tip" class="hidden"></div>
+      </div>
+      <p class="muted" style="margin: 10px 2px 0">【3D·v8】横轴 = 一天 24 小时(每 2 小时一刻度),深度 = 日期,时轴前的色带按时间首尾相接标明各班次时段(如 night 0–8 · early 8–16 · late 16–24)。默认<b>人员站位</b>:每位员工一个专属颜色的小人站在其班次时段上(颜色与下方员工卡片头像一致),悬停看是谁;<b>班次堆积</b>:色块按班次堆叠、每人一层深色分隔线。🖱 拖拽旋转 · 滚轮缩放 · 右键平移。跨天班次计入次日凌晨时段。</p>
     </div>
     <div class="card">
       <h2>员工负荷</h2>
@@ -366,6 +416,12 @@
 <script>
 const DAY_NAMES = ['周一','周二','周三','周四','周五','周六','周日'];
 const $ = id => document.getElementById(id);
+
+// 全局错误收集(3D 诊断用):任何脚本错误 / 未处理的 Promise 拒绝都会被记录
+window.__pageErrors = [];
+window.addEventListener('error', e => window.__pageErrors.push(String(e.message || e.type || 'error')));
+window.addEventListener('unhandledrejection', e =>
+  window.__pageErrors.push('promise: ' + String((e.reason && e.reason.message) || e.reason)));
 
 // ------------------------------------------------------------ date range
 function fmtDate(dt) {  // Date → "YYYY-MM-DD" local
@@ -677,11 +733,20 @@ function collectPayload() {
     return { employee_id: id, shift_id: sid, weight: +(w || 1) };
   });
 
+  // 锁定的班次 → fixed_assignments;员工/班次/覆盖改动后失效的锁定静默丢弃
+  const empIds = new Set(employees.map(e => e.id));
+  const sidIds = new Set(shifts.map(s => s.id));
+  const covKeys = new Set(coverage.map(c => `${c.shift_id}|${c.day}`));
+  const fixed_assignments = [...lockedAssignments]
+    .map(k => { const [employee_id, day, shift_id] = JSON.parse(k); return { employee_id, day, shift_id }; })
+    .filter(a => empIds.has(a.employee_id) && sidIds.has(a.shift_id) &&
+                 a.day >= 0 && a.day < n && covKeys.has(`${a.shift_id}|${a.day}`));
+
   return {
     num_days: n,
     start_date: $('start_date').value || null,
     holidays: [...holidays],
-    employees, shifts, coverage, time_off, preferences,
+    employees, shifts, coverage, time_off, preferences, fixed_assignments,
     constraints: {
       max_consecutive_days: +$('max_consecutive_days').value,
       min_rest_hours: +$('min_rest_hours').value,
@@ -694,6 +759,19 @@ function collectPayload() {
 
 // ------------------------------------------------------------ solve
 let lastResponse = null;
+let lastPayload = null;   // 供 3D 模块就绪后补渲染(见 module 脚本末尾)
+let lastSentCore = null;             // 上次求解 payload(去掉 fixed/hint),判断输入是否变化
+let lockedAssignments = new Set();   // keys: JSON [employee_id, day, shift_id]
+const lockKey = (employee_id, day, shift_id) => JSON.stringify([employee_id, day, shift_id]);
+const sameAssign = (a, b) => a.employee_id === b.employee_id && a.day === b.day && a.shift_id === b.shift_id;
+
+function unlockAll() {
+  if (!lockedAssignments.size) return;
+  lockedAssignments = new Set();
+  document.querySelectorAll('#schedule-table .bar.locked').forEach(el => el.classList.remove('locked'));
+  save();
+  showBanner('ok', '✓ 已解锁全部班次,重新求解将自由重排');
+}
 
 async function solveNow() {
   let payload;
@@ -703,6 +781,17 @@ async function solveNow() {
   if (!payload.employees.length) return showBanner('err', '⚠ 请先添加员工');
   if (!payload.shifts.length) return showBanner('err', '⚠ 请先添加班次');
   if (!payload.coverage.length) return showBanner('err', '⚠ 请先填写覆盖需求');
+
+  // 热启动提示(仅本次请求,不随 localStorage 持久化)。实测:提示仍有效时大幅提速
+  // (输入不变 7×,大实例超时重解 15×),但输入改过、提示已过期时反而 ~2× 拖慢 ——
+  // 所以只在(a)除锁定外输入未变,且锁定都是上次解的子集,或(b)上次超时(状态为
+  // FEASIBLE,incumbent 质量远比开销重要)时发送。
+  const core = JSON.stringify({ ...payload, fixed_assignments: [] });
+  const fixedFromLast = payload.fixed_assignments.every(a =>
+    lastResponse?.assignments.some(b => sameAssign(a, b)));
+  if (lastResponse && ((lastSentCore === core && fixedFromLast) || lastResponse.status === 'FEASIBLE'))
+    payload.hint_assignments = lastResponse.assignments;
+  lastSentCore = core;
 
   $('solve-btn').disabled = true;
   $('solve-btn').textContent = '求解中…';
@@ -763,6 +852,7 @@ function renderResult(payload, resp, preWarnings = []) {
     $('emp-cards').innerHTML = '';
     $('stats-table').innerHTML = '';
     $('fairness-summary').textContent = '';
+    if (typeof window.duty3dClear === 'function') duty3dClear();
     return showBanner('err', `⚠ ${resp.status === 'INFEASIBLE' ? '无可行解' : '未在时限内找到解'} — ${resp.message}${warnSuffix}`);
   }
 
@@ -772,6 +862,19 @@ function renderResult(payload, resp, preWarnings = []) {
   const shifts = Object.fromEntries(payload.shifts.map(s => [s.id, s]));
   const statsById = Object.fromEntries(resp.stats.map(s => [s.employee_id, s]));
   const shiftName = sid => shifts[sid]?.name || sid;
+
+  // 软覆盖短缺:哪些班次缺人/缺技能(服务端按覆盖需求独立重算)
+  const sf = resp.shortfalls || [];
+  const totalMissing = sf.reduce((t, x) => t + x.missing_staff, 0);
+  const sfByDay = Array.from({ length: n }, () => []);
+  for (const x of sf) sfByDay[x.day].push(x);
+  if (sf.length) {
+    const lines = sf.slice(0, 8).map(x =>
+      `${dayLabel(x.day)} ${shiftName(x.shift_id)}:缺 ${x.missing_staff} 人` +
+      (x.missing_skills.length ? `(技能 ${x.missing_skills.join('/')} 无人覆盖)` : ''));
+    const more = sf.length > 8 ? `\n… 共 ${sf.length} 处` : '';
+    showBanner('warn', `⚠ 人手不足,已给出最优努力方案(缺 ${totalMissing} 人次,${sf.length} 处):\n${lines.join('\n')}${more}${warnSuffix}`);
+  }
 
   // employee → day → [shift ids](one_shift_per_day 关闭时一天可能多班)
   const byEmp = {};
@@ -786,7 +889,10 @@ function renderResult(payload, resp, preWarnings = []) {
   const nt = resp.stats.map(s => s.night_shifts);
   const totalHours = hrs.reduce((t, h) => t + h, 0);
   const kpis = [
-    `<div class="kpi"><div class="kpi-val"><span class="kpi-badge ${resp.status === 'OPTIMAL' ? '' : 'feasible'}">${resp.status === 'OPTIMAL' ? '✓ 最优' : '≈ 可行'}</span></div><div class="kpi-label">求解耗时 ${resp.solve_time_ms.toFixed(0)}ms</div></div>`,
+    `<div class="kpi"><div class="kpi-val">${sf.length
+      ? '<span class="kpi-badge feasible">⚠ 缺员</span>'
+      : `<span class="kpi-badge ${resp.status === 'OPTIMAL' ? '' : 'feasible'}">${resp.status === 'OPTIMAL' ? '✓ 最优' : '≈ 可行'}</span>`}</div><div class="kpi-label">求解耗时 ${resp.solve_time_ms.toFixed(0)}ms</div></div>`,
+    ...(sf.length ? [`<div class="kpi"><div class="kpi-val" style="color:var(--yellow-fg)"><span data-count="${totalMissing}">0</span><small>人次</small></div><div class="kpi-label">缺员 · ${sf.length} 个班次未满足</div></div>`] : []),
     `<div class="kpi"><div class="kpi-val"><span data-count="${resp.assignments.length}">0</span><small>班</small></div><div class="kpi-label">${n} 天 · ${payload.employees.length} 人</div></div>`,
     `<div class="kpi"><div class="kpi-val"><span data-count="${totalHours.toFixed(0)}">0</span><small>h</small></div><div class="kpi-label">总工时 · 人均 ${(totalHours / payload.employees.length).toFixed(1)}h</div></div>`,
     `<div class="kpi"><div class="kpi-val"><span data-count="${(resp.assignments.length / n).toFixed(1)}" data-dec="1">0</span></div><div class="kpi-label">日均班次</div></div>`,
@@ -825,8 +931,10 @@ function renderResult(payload, resp, preWarnings = []) {
           if (!s) return '';
           const left = toMin(s.start) / 14.4;      // % of 1440 min
           const width = shiftDur(s) / 14.4;
-          return `<div class="bar ${barClass(sid, s.is_night)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;animation-delay:${Math.min(d * 15, 450)}ms"` +
-                 ` title="${esc(shiftName(sid))} ${s.start}–${s.end} · ${esc(e.name)}"></div>`;
+          const key = lockKey(e.id, d, sid);
+          const locked = lockedAssignments.has(key);
+          return `<div class="bar ${barClass(sid, s.is_night)}${locked ? ' locked' : ''}" data-lock="${esc(key)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;animation-delay:${Math.min(d * 15, 450)}ms"` +
+                 ` title="${esc(shiftName(sid))} ${s.start}–${s.end} · ${esc(e.name)} · ${locked ? '已锁定,点击解锁' : '点击锁定'}"></div>`;
         }).join('');
         html += `<td class="day ${hcls}"><div class="track">${bars}</div></td>`;
       } else {
@@ -847,10 +955,33 @@ function renderResult(payload, resp, preWarnings = []) {
   for (let d = 0; d < n; d++) {
     const detail = payload.shifts.map(s => `${shiftName(s.id)}×${perDayShifts[d][s.id] || 0}`).join(' ');
     const alpha = (perDay[d] / maxDay * 0.5).toFixed(2);
-    html += `<td class="${dcls(d)}" style="background:rgba(59,130,246,${alpha})" title="${esc(detail)}">${perDay[d] || '·'}</td>`;
+    const sfs = sfByDay[d];
+    const sfTxt = sfs.map(x => `${shiftName(x.shift_id)}缺${x.missing_staff}` +
+      (x.missing_skills.length ? `(含技能 ${x.missing_skills.join('/')})` : '')).join(' ');
+    html += `<td class="${dcls(d)}${sfs.length ? ' short' : ''}"` +
+      (sfs.length ? '' : ` style="background:rgba(59,130,246,${alpha})"`) +
+      ` title="${esc(detail)}${sfTxt ? ' · ' + esc(sfTxt) : ''}">${perDay[d] || '·'}</td>`;
   }
   html += '</tr></tfoot>';
   $('schedule-table').innerHTML = html;
+
+  // 3D 在岗图:图例 + 渲染(模块脚本就绪后可用;否则显示带原因的降级提示)
+  lastPayload = payload;
+  $('duty3d-legend').innerHTML =
+    payload.shifts.map(s => `<span><span class="sw ${barClass(s.id, s.is_night)}"></span>${esc(s.name || s.id)}</span>`).join('') +
+    '<span><span class="sw sw-weekend3d"></span>周末</span>';
+  if (typeof window.renderDuty3D === 'function') window.renderDuty3D(payload, resp);
+  else {
+    // 不再笼统提示,把诊断信息直接写到页面上,一眼定位失败环节
+    const st = String(window.__duty3dState ?? 'undefined');
+    let gl = '无';
+    try { gl = document.createElement('canvas').getContext('webgl2') ? 'webgl2✓' : '无'; } catch { gl = '异常'; }
+    const errs = (window.__pageErrors || []).slice(-3).join(' | ') || '无';
+    $('duty3d-fallback').innerHTML =
+      `<b>3D 视图未渲染${st === 'undefined' ? '(3D 库仍在加载,稍等片刻会自动显示)' : ' — 请把下面这行灰字发给我定位'}</b><br>` +
+      `<code style="font-size:12px;user-select:all;color:var(--muted)">state=${st} | renderFn=${typeof window.renderDuty3D} | webgl=${gl} | errors=${errs}</code>`;
+    $('duty3d-fallback').classList.remove('hidden');
+  }
 
   renderEmployeeCards(payload, resp);
 
@@ -957,6 +1088,19 @@ let bannerTimer = null;
 $('banner-close').onclick = hideBanner;
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape') hideBanner(); });
 
+// 点击甘特色块 → 锁定/解锁该班次(随请求作为 fixed_assignments 发送并持久化)
+$('schedule-table').addEventListener('click', ev => {
+  const bar = ev.target.closest('.bar');
+  if (!bar || !bar.dataset.lock) return;
+  const key = bar.dataset.lock;
+  const nowLocked = !lockedAssignments.has(key);
+  nowLocked ? lockedAssignments.add(key) : lockedAssignments.delete(key);
+  bar.classList.toggle('locked', nowLocked);
+  bar.title = bar.title.replace(/ · (已锁定|点击锁定).*/, '') +
+              (nowLocked ? ' · 已锁定,点击解锁' : ' · 点击锁定');
+  save();
+});
+
 // ------------------------------------------------------------ floating solve button
 // 悬浮求解按钮:点击求解,按住拖动可改位置(位移 >5px 视为拖动,不触发求解)。
 (() => {
@@ -1036,6 +1180,8 @@ function restore() {
     document.querySelectorAll('[data-cov]').forEach(i => { if (cov[i.dataset.cov] !== undefined && !i.disabled) i.value = cov[i.dataset.cov]; });
     $('timeoff').value = (p.time_off || []).map(t => `${t.employee_id}, ${t.day}, ${t.hard ? 'hard' : 'soft'}`).join('\n');
     $('preferences').value = (p.preferences || []).map(x => `${x.employee_id}, ${x.shift_id}, ${x.weight}`).join('\n');
+    lockedAssignments = new Set((p.fixed_assignments || [])
+      .map(a => lockKey(a.employee_id, a.day, a.shift_id)));
     return true;
   } catch { return false; }
 }
@@ -1108,6 +1254,9 @@ function clearAll(confirmFirst = true) {
   $('timeoff').value = '';
   $('preferences').value = '';
   holidays = new Set();
+  lockedAssignments = new Set();
+  lastResponse = null;
+  lastSentCore = null;
   $('result').classList.add('hidden');
   hideBanner();
   renderCoverage();
@@ -1116,6 +1265,477 @@ function clearAll(confirmFirst = true) {
 
 // ------------------------------------------------------------ init
 if (!restore()) loadExample();
+</script>
+
+<script type="module">
+// 3D 每日在岗人数图:three.js(自托管 /vendor,无外部 CDN 依赖)。
+// X = 一天 24 小时(每 2h 一刻度),Y = 在岗人数,Z = 日期向深处延伸。
+// 两种模式:班次堆积(每人一层深色分隔线)/ 人员站位(每位员工一个专属色小人)。
+// 动态 import + 状态上报:任一环节失败都能在页面上看到具体原因;
+// 若 3D 库加载完成晚于首次求解(约 700KB,首次稍慢),就绪后自动补渲染。
+const wrap = document.getElementById('duty3d-wrap');
+const tip = document.getElementById('duty3d-tip');
+const fb = document.getElementById('duty3d-fallback');
+const errMsg = e => (e && e.message) ? e.message : String(e);
+const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+
+let renderer = null, scene, camera, controls, raycaster, chartGroup = null, hovered = null;
+let ctx = null;          // 当前图数据 {payload, resp, duty, n, order, maxTotal, DZ}
+let THREE = null, OrbitControls = null;
+let mouse = null, mouseIn = false, mouseClient = { x: 0, y: 0 };
+let viewMode = 'people'; // 'people' 人员站位(默认)| 'bars' 班次堆积
+let boxCount = 0, pawnCount = 0, legendCount = 0, legendRows = 0;
+
+function fail(reason) {
+  window.__duty3dState = reason;
+  console.error('[duty3d]', reason);
+  try {
+    if (!fb) return;
+    const escLocal = s => String(s).replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const msg = reason.startsWith('no-webgl')
+      ? '当前浏览器不支持或已禁用 WebGL,无法显示 3D 视图。'
+      : reason.startsWith('load-failed')
+        ? `3D 库加载失败(${escLocal(reason)})— 刷新页面重试;F12 控制台有详细错误。`
+        : `3D 模块出错(${escLocal(reason)})— F12 控制台有详细堆栈。`;
+    fb.innerHTML = `<b>3D 视图不可用</b> — ${msg}<br>排班结果与甘特图不受影响,仍完整可用。`;
+    fb.classList.remove('hidden');
+  } catch (e2) { console.error('[duty3d] fail() 自身出错:', e2); }
+}
+
+// ---------------------------------------------------------- 数据:小时级在岗矩阵
+function buildDuty(payload, resp) {
+  const n = payload.num_days;
+  const shifts = Object.fromEntries(payload.shifts.map(s => [s.id, s]));
+  const duty = Array.from({ length: n }, () => Array.from({ length: 24 }, () => ({})));
+  for (const a of resp.assignments) {
+    const s = shifts[a.shift_id];
+    if (!s) continue;
+    const b = toMin(s.start), e = toMin(s.end);
+    const dur = e > b ? e - b : e + 1440 - b;          // 跨天班次计入次日
+    const start = a.day * 1440 + b, end = start + dur;
+    for (let t = Math.floor(start / 60) * 60; t < end; t += 60) {
+      const d = Math.floor(t / 1440), h = Math.floor((t % 1440) / 60);
+      if (d >= 0 && d < n) duty[d][h][a.shift_id] = (duty[d][h][a.shift_id] || 0) + 1;
+    }
+  }
+  return duty;
+}
+
+// ---------------------------------------------------------- 文字精灵(轴标注)
+function textSprite(lines, { size = 44, color = '#8b98ab', weight = 500 } = {}) {
+  const pad = 12, lh = size * 1.22;
+  const c = document.createElement('canvas');
+  const cx = c.getContext('2d');
+  const font = `${weight} ${size}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  cx.font = font;
+  const w = Math.ceil(Math.max(...lines.map(l => cx.measureText(l).width))) + pad * 2;
+  c.width = w; c.height = lines.length * lh + pad * 2;
+  cx.font = font;                                     // canvas resize 后字体重置,需重设
+  cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillStyle = color;
+  lines.forEach((l, i) => cx.fillText(l, w / 2, pad + lh * (i + 0.5)));
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  sp.scale.set(w * 0.012, c.height * 0.012, 1);
+  return sp;
+}
+
+// ---------------------------------------------------------- 渲染器(只建一次)
+function ensureRenderer() {
+  if (renderer) return true;
+  try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); }
+  catch (e) { fail('no-webgl: ' + errMsg(e)); return false; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  wrap.appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.maxPolarAngle = Math.PI * 0.49;
+
+  scene.add(new THREE.HemisphereLight(0xbcd3ff, 0x111827, 1.1));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+  sun.position.set(18, 30, 22);
+  scene.add(sun);
+
+  raycaster = new THREE.Raycaster();
+  mouse = new THREE.Vector2(2, 2);
+  const el = renderer.domElement;
+  el.addEventListener('pointermove', ev => {
+    const r = el.getBoundingClientRect();
+    mouse.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
+    mouse.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
+    const wr = wrap.getBoundingClientRect();
+    mouseClient = { x: ev.clientX - wr.left, y: ev.clientY - wr.top };
+    mouseIn = true;
+  });
+  el.addEventListener('pointerleave', () => { mouseIn = false; });
+
+  new ResizeObserver(() => {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }).observe(wrap);
+
+  (function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    hoverRaycast();
+    renderer.render(scene, camera);
+  })();
+  return true;
+}
+
+// 释放本轮渲染的独占资源;带 cached 标记的共享缓存(几何/材质/贴图)跳过
+function disposeGroup(g) {
+  g.traverse(o => {
+    if (o.geometry && !o.geometry.userData?.cached) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+    for (const m of mats)
+      if (!m.userData?.cached) { m.map?.dispose?.(); m.dispose(); }
+  });
+}
+
+// ---------------------------------------------------------- 共享缓存(跨多次渲染复用)
+const PALETTE = { 'bar-early': 0x22c55e, 'bar-late': 0xf59e0b,
+                  'bar-night': 0x6366f1, 'bar-other': 0x94a3b8 };
+const geoCache = {}, edgeCache = {}, stripeCache = {}, matArrCache = {};
+let edgeMat = null;
+
+// 每"人"一层的白色底纹 + 深色分隔线贴图:乘上班次色后即"每人一条深色分割"
+function stripedMats(colorHex, count) {
+  const key = colorHex + '_' + count;
+  if (matArrCache[key]) return matArrCache[key];
+  let tex = stripeCache[count];
+  if (!tex) {
+    const row = 24;
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = count * row;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+    cx.fillStyle = 'rgba(0,0,0,.62)';
+    for (let i = 1; i < count; i++) cx.fillRect(0, i * row - 1, c.width, 2);
+    tex = new THREE.CanvasTexture(c);
+    tex.userData.cached = true;
+    stripeCache[count] = tex;
+  }
+  const side = new THREE.MeshLambertMaterial({ color: colorHex, map: tex });
+  const plain = new THREE.MeshLambertMaterial({ color: colorHex });
+  side.userData.cached = true; plain.userData.cached = true;
+  // BoxGeometry 材质组顺序:+x -x +y(顶) -y(底) +z -z —— 顶/底用纯色,四侧带分隔线
+  return matArrCache[key] = [side, side, plain, plain, side, side];
+}
+
+function buildBars(duty, order, n, DZ, X0, zOf) {
+  if (!edgeMat) {
+    edgeMat = new THREE.LineBasicMaterial({ color: 0x05080f, transparent: true, opacity: 0.45 });
+    edgeMat.userData.cached = true;
+  }
+  for (let d = 0; d < n; d++) {
+    let h = 0;
+    while (h < 24) {
+      const sig = JSON.stringify(duty[d][h]);
+      let h2 = h + 1;
+      while (h2 < 24 && JSON.stringify(duty[d][h2]) === sig) h2++;
+      const cell = duty[d][h];
+      let base = 0;
+      for (const s of order) {
+        const cnt = cell[s.id] || 0;
+        if (cnt > 0) {
+          const w = h2 - h, gk = `${w}x${cnt}`;
+          const geo = geoCache[gk] ??= (() => {
+            const g = new THREE.BoxGeometry(w, cnt, DZ * 0.86);
+            g.userData.cached = true;
+            return g;
+          })();
+          const colorHex = PALETTE[barClass(s.id, s.is_night)] ?? PALETTE['bar-other'];
+          const mesh = new THREE.Mesh(geo, stripedMats(colorHex, cnt));
+          const eg = edgeCache[gk] ??= (() => {
+            const g = new THREE.EdgesGeometry(geo);
+            g.userData.cached = true;
+            return g;
+          })();
+          mesh.add(new THREE.LineSegments(eg, edgeMat));
+          mesh.position.set(X0 + h + w / 2, base + cnt / 2, zOf(d));
+          mesh.userData = { isBox: true, day: d, h0: h, h1: h2 };
+          chartGroup.add(mesh);
+          boxCount++;
+          base += cnt;
+        }
+      }
+      h = h2;
+    }
+  }
+}
+
+// ---------------------------------------------------------- 人员站位模式
+let pawnBodyGeo = null, pawnHeadGeo = null;
+const pawnMatCache = {};
+function pawnMat(name) {
+  if (pawnMatCache[name]) return pawnMatCache[name];
+  const hue = [...name].reduce((t, c) => t + c.codePointAt(0), 0) % 360;  // 与员工卡片头像同色
+  const m = new THREE.MeshLambertMaterial();
+  m.color.setHSL(hue / 360, 0.5, 0.6);
+  m.userData.cached = true;
+  return pawnMatCache[name] = m;
+}
+
+function buildPawns(payload, resp, X0, zOf) {
+  pawnBodyGeo ??= new THREE.CapsuleGeometry(0.17, 0.34, 4, 10);
+  pawnHeadGeo ??= new THREE.SphereGeometry(0.145, 14, 10);
+  pawnBodyGeo.userData.cached = true; pawnHeadGeo.userData.cached = true;
+  const shifts = Object.fromEntries(payload.shifts.map(s => [s.id, s]));
+  const nameOf = Object.fromEntries(payload.employees.map(e => [e.id, e.name || e.id]));
+  const orderIdx = Object.fromEntries(payload.employees.map((e, i) => [e.id, i]));
+  const bySlot = {};
+  for (const a of resp.assignments) (bySlot[a.day + '|' + a.shift_id] ??= []).push(a);
+
+  for (const [key, list] of Object.entries(bySlot)) {
+    const [d, sid] = key.split('|');
+    const day = +d, s = shifts[sid];
+    if (!s) continue;
+    list.sort((a, b) => (orderIdx[a.employee_id] ?? 0) - (orderIdx[b.employee_id] ?? 0));
+    const sMin = toMin(s.start), eMin = toMin(s.end);
+    const durMin = eMin > sMin ? eMin - sMin : eMin + 1440 - sMin;
+    const x0 = sMin / 60;
+    const span = Math.max(0.6, Math.min((sMin + durMin) / 60, 24) - x0);  // 跨天班只画当天部分
+    const info = i => ({
+      isMeeple: true, name: nameOf[list[i].employee_id] || list[i].employee_id,
+      shiftName: s.name || s.id, start: s.start, end: s.end, day,
+    });
+    list.forEach((a, i) => {
+      const mat = pawnMat(info(i).name);
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(pawnBodyGeo, mat);
+      body.position.y = 0.34;
+      const head = new THREE.Mesh(pawnHeadGeo, mat);
+      head.position.y = 0.75;
+      body.userData = head.userData = info(i);
+      g.add(body, head);
+      g.position.set(X0 + x0 + span * (i + 0.5) / list.length, 0, zOf(day));
+      chartGroup.add(g);
+      pawnCount++;
+    });
+  }
+}
+
+// ---------------------------------------------------------- 班次时段色带(时间轴前的图例)
+function buildShiftLegend(order, X0, zHi) {
+  const short = t => { const [h, m] = t.split(':'); return +m ? `${+h}:${m}` : String(+h); };
+  const rows = [];   // 贪心分行:时段不重叠的班次同行对齐,拼成一条标尺;重叠的才另起一行
+  order.forEach((s, i) => {
+    const sMin = toMin(s.start), eMin = toMin(s.end);
+    // 跨天班拆成 [22,24] 和 [0,6] 两段画在当天的时轴上
+    const segs = eMin > sMin ? [[sMin / 60, eMin / 60]]
+      : [[sMin / 60, 24], ...(eMin > 0 ? [[0, eMin / 60]] : [])];
+    let r = rows.findIndex(spans => spans.every(([a, b]) =>
+      segs.every(([c, d]) => b <= c || d <= a)));
+    if (r === -1) { r = rows.length; rows.push([]); }
+    rows[r].push(...segs);
+    const colorHex = PALETTE[barClass(s.id, s.is_night)] ?? PALETTE['bar-other'];
+    const z = zHi + 0.7 + r * 0.55;
+    for (const [a, b] of segs) {
+      const strip = new THREE.Mesh(
+        new THREE.BoxGeometry(b - a, 0.06, 0.42),
+        new THREE.MeshBasicMaterial({ color: colorHex }));
+      strip.position.set(X0 + (a + b) / 2, 0.03, z);
+      chartGroup.add(strip);
+    }
+    const cx = segs.reduce((t, g) => t + (g[0] + g[1]) / 2, 0) / segs.length;
+    const cssColor = '#' + colorHex.toString(16).padStart(6, '0');
+    const sp = textSprite([`${s.name || s.id} ${short(s.start)}–${short(s.end)}`],
+      { size: 38, color: cssColor });
+    sp.position.set(X0 + cx, 0.62, z);
+    chartGroup.add(sp);
+    legendCount++;
+  });
+  legendRows = rows.length;
+}
+
+// ---------------------------------------------------------- 场景搭建
+function renderChart(payload, resp) {
+  if (!ensureRenderer()) return;
+  fb.classList.add('hidden');
+  if (chartGroup) { scene.remove(chartGroup); disposeGroup(chartGroup); }
+  chartGroup = new THREE.Group();
+
+  const n = payload.num_days;
+  const duty = buildDuty(payload, resp);
+  const order = payload.shifts;
+  const DZ = n > 30 ? 1.0 : 1.3;
+  const X0 = -12, zOf = d => (d - (n - 1) / 2) * DZ;
+  let maxTotal = 1;
+  for (const row of duty) for (const cell of row) {
+    const t = Object.values(cell).reduce((a, b) => a + b, 0);
+    if (t > maxTotal) maxTotal = t;
+  }
+  ctx = { payload, resp, duty, n, order, maxTotal, DZ, zOf };
+
+  boxCount = 0; pawnCount = 0; legendCount = 0; legendRows = 0;
+  if (viewMode === 'people') buildPawns(payload, resp, X0, zOf);
+  else buildBars(duty, order, n, DZ, X0, zOf);
+  buildShiftLegend(order, X0, zOf(n - 1) + DZ / 2);
+
+  // 地面 + 网格线(每 2 小时一条纵线,每天一条横线)
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(30, n * DZ + 6),
+    new THREE.MeshBasicMaterial({ color: 0x0d1524, transparent: true, opacity: 0.55, depthWrite: false }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.06;
+  chartGroup.add(floor);
+
+  const zLo = zOf(0) - DZ / 2, zHi = zOf(n - 1) + DZ / 2;
+  const hourPts = [], dayPts = [];
+  for (let hh = 0; hh <= 24; hh += 2) hourPts.push(X0 + hh, 0, zLo, X0 + hh, 0, zHi);
+  for (let d = 0; d < n; d++) dayPts.push(X0 - 0.7, 0, zOf(d), X0 + 24.7, 0, zOf(d));
+  const mkLines = (pts, color, op) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity: op }));
+  };
+  chartGroup.add(mkLines(hourPts, 0x2b3a55, 0.5));
+  chartGroup.add(mkLines(dayPts, 0x1c2942, 0.8));
+
+  // 周末行底色
+  for (let d = 0; d < n; d++) {
+    const g = dayDate(d).getDay();
+    if (g !== 0 && g !== 6) continue;
+    const strip = new THREE.Mesh(
+      new THREE.BoxGeometry(25.4, 0.04, DZ * 0.94),
+      new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.10, depthWrite: false }));
+    strip.position.set(X0 + 12, 0.02, zOf(d));
+    chartGroup.add(strip);
+  }
+
+  // 轴标注:小时每 2h 一刻(整 6h 加大加亮)/ 日期(左侧,周末蓝色)/ 人数(左前角)
+  for (let hh = 0; hh <= 24; hh += 2) {
+    const major = hh % 6 === 0;
+    const sp = textSprite([String(hh)], { size: major ? 44 : 34, color: major ? '#7d8ba3' : '#5b6880' });
+    sp.position.set(X0 + hh, 0.35, zHi + 1.4);
+    chartGroup.add(sp);
+  }
+  const dStep = Math.max(1, Math.ceil(n / 9));
+  for (let d = 0; d < n; d += dStep) {
+    const dt = dayDate(d), wd = dt.getDay();
+    const sp = textSprite([`${dt.getMonth() + 1}/${dt.getDate()}`, DAY_NAMES[wd === 0 ? 6 : wd - 1]],
+      { size: 40, color: wd === 0 || wd === 6 ? '#93b4f8' : '#8b98ab' });
+    sp.position.set(X0 - 2.6, 0.9, zOf(d));
+    chartGroup.add(sp);
+  }
+  const yStep = maxTotal > 8 ? Math.ceil(maxTotal / 6) : 1;
+  for (let i = yStep; i <= maxTotal; i += yStep) {
+    const sp = textSprite([String(i)], { size: 40, color: '#66748c' });
+    sp.position.set(X0 - 1.2, i, zHi + 1.2);
+    chartGroup.add(sp);
+  }
+
+  scene.add(chartGroup);
+  window.__duty3dStats = { mode: viewMode, boxes: boxCount, pawns: pawnCount,
+                           legendStrips: legendCount, legendRows,
+                           drawCalls: renderer.info.render.calls };
+  syncModeButtons();
+  setView('iso');
+}
+
+// ---------------------------------------------------------- 视角 / 模式
+function setView(kind) {
+  if (!camera || !ctx) return;
+  const R = Math.hypot(15, (ctx.n * ctx.DZ) / 2, ctx.maxTotal / 2 + 3);
+  const dist = R * 2.9;
+  const az = THREE.MathUtils.degToRad(34), el = THREE.MathUtils.degToRad(31);
+  controls.target.set(0, ctx.maxTotal * 0.32, 0);
+  if (kind === 'top') camera.position.set(0.01, dist * 0.9, 0.01);
+  else camera.position.set(dist * Math.cos(el) * Math.sin(az), dist * Math.sin(el),
+                           dist * Math.cos(el) * Math.cos(az));
+  controls.update();
+}
+
+function setMode(m) {
+  if (!ctx || m === viewMode) return;
+  viewMode = m;
+  renderChart(ctx.payload, ctx.resp);
+}
+function syncModeButtons() {
+  document.getElementById('duty3d-mode-bars')?.classList.toggle('active', viewMode === 'bars');
+  document.getElementById('duty3d-mode-people')?.classList.toggle('active', viewMode === 'people');
+}
+
+// ---------------------------------------------------------- 悬停拾取 + tooltip
+function hoverRaycast() {
+  if (!chartGroup || !mouseIn) { setHovered(null); return; }
+  raycaster.setFromCamera(mouse, camera);
+  const hit = raycaster.intersectObjects(chartGroup.children, true)
+    .find(o => o.object.userData.isBox || o.object.userData.isMeeple);
+  setHovered(hit ? hit.object : null);
+}
+function setHovered(mesh) {
+  if (hovered === mesh) { if (mesh) placeTip(); return; }
+  const scaleTarget = m => (m.userData.isMeeple ? m.parent : m) || m;  // 小人放大整个 Group
+  if (hovered) scaleTarget(hovered).scale.setScalar(1);  // 材质跨对象共享,高亮只能用缩放
+  hovered = mesh;
+  if (!mesh) {
+    tip.classList.add('hidden');
+    renderer.domElement.style.cursor = 'grab';
+    return;
+  }
+  scaleTarget(mesh).scale.setScalar(1.15);
+  renderer.domElement.style.cursor = 'pointer';
+  const u = mesh.userData;
+  const hh = x => String(x).padStart(2, '0');
+  if (u.isMeeple) {
+    tip.innerHTML = `<b>${esc(u.name)}</b> · ${esc(u.shiftName)} ${u.start}–${u.end}<br>${esc(dayLabel(u.day))}`;
+  } else {
+    const cell = ctx.duty[u.day][u.h0];
+    const parts = ctx.order.filter(s => cell[s.id])
+      .map(s => `${esc(s.name || s.id)}×${cell[s.id]}`);
+    const total = Object.values(cell).reduce((a, b) => a + b, 0);
+    tip.innerHTML = `<b>${esc(dayLabel(u.day))}</b> · ${hh(u.h0)}:00–${hh(u.h1)}:00<br>` +
+      (parts.length ? parts.join(' · ') : '无人上班') +
+      `<br>在岗 <b>${total}</b> 人`;
+  }
+  tip.classList.remove('hidden');
+  placeTip();
+}
+function placeTip() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = Math.min(mouseClient.x + 16, w - tw - 8) + 'px';
+  tip.style.top = Math.max(8, Math.min(mouseClient.y - th - 12, h - th - 8)) + 'px';
+}
+
+// ---------------------------------------------------------- 启动:加载 → 接线 → 补渲染
+(async function boot() {
+  try {
+    THREE = await import('three');
+    ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+  } catch (e) {
+    fail('load-failed: ' + errMsg(e));
+    return;
+  }
+  window.renderDuty3D = (payload, resp) => {
+    try { renderChart(payload, resp); }
+    catch (e) { fail('render-error: ' + errMsg(e)); }
+  };
+  window.duty3dSetView = setView;
+  window.duty3dSetMode = setMode;
+  window.duty3dClear = () => {
+    if (!chartGroup || !scene) return;
+    scene.remove(chartGroup);
+    disposeGroup(chartGroup);
+    chartGroup = null;
+    setHovered(null);
+  };
+  window.__duty3dState = 'ready';
+
+  // 首次加载比求解慢的竞态:结果已在页面上时,就绪后自动补渲染并撤掉降级提示
+  if (lastResponse && lastPayload && !document.getElementById('result').classList.contains('hidden'))
+    window.renderDuty3D(lastPayload, lastResponse);
+})();
 </script>
 </body>
 </html>

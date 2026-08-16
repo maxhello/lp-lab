@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..pages import register_home
@@ -13,6 +14,7 @@ from .models import SolveRequest, SolveResponse
 from .solver import solve
 
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
+VENDOR_DIR = STATIC_DIR / "vendor"
 
 
 class ValidateResponse(BaseModel):
@@ -25,7 +27,10 @@ router = APIRouter()
 
 @router.get("/tools/scheduling", include_in_schema=False)
 def tool_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "scheduling.html")
+    # no-cache: 每次带 etag 再验证(未变则 304),避免浏览器启发式缓存把旧版
+    # HTML 一直留在本地 —— 前端无构建步骤,页面更新全靠重新拉取。
+    return FileResponse(STATIC_DIR / "scheduling.html",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @router.post("/api/scheduling/solve", response_model=SolveResponse)
@@ -53,8 +58,50 @@ def validate_request(req: SolveRequest) -> ValidateResponse:
             )
 
     warnings.extend(_capacity_warnings(req))
+    warnings.extend(_fixed_assignment_warnings(req))
 
     return ValidateResponse(ok=not warnings, warnings=warnings)
+
+
+def _fixed_assignment_warnings(req: SolveRequest) -> list[str]:
+    """锁定班次与其他输入的显式冲突:能在求解前指出,就不浪费一次求解。"""
+    if not req.fixed_assignments:
+        return []
+    warnings: list[str] = []
+
+    hard_off = {(t.employee_id, t.day) for t in req.time_off if t.hard}
+    per_emp_day: dict[tuple[str, int], set[str]] = {}
+    for a in req.fixed_assignments:
+        if (a.employee_id, a.day) in hard_off:
+            warnings.append(
+                f"{a.employee_id} 第 {a.day} 天已申请硬休假,锁定的 {a.shift_id} 班与之冲突,必然无解。"
+            )
+        per_emp_day.setdefault((a.employee_id, a.day), set()).add(a.shift_id)
+
+    if req.constraints.one_shift_per_day:
+        for (eid, d), sids in per_emp_day.items():
+            if len(sids) > 1:
+                warnings.append(
+                    f"{eid} 第 {d} 天锁定了 {len(sids)} 个班次({'、'.join(sorted(sids))}),"
+                    f"与「每天最多一班」冲突,必然无解。"
+                )
+
+    shift_by_id = {s.id: s for s in req.shifts}
+    per_emp_week: dict[tuple[str, int], int] = {}
+    for a in req.fixed_assignments:
+        key = (a.employee_id, a.day // 7)
+        per_emp_week[key] = per_emp_week.get(key, 0) + shift_by_id[a.shift_id].duration_min
+    emp_by_id = {e.id: e for e in req.employees}
+    for (eid, w), mins in sorted(per_emp_week.items()):
+        e = emp_by_id[eid]
+        cap = (e.max_hours_per_week if e.max_hours_per_week is not None
+               else req.constraints.max_hours_per_week) * 60
+        if mins > cap + 1e-9:
+            warnings.append(
+                f"{_week_label(req, w * 7, min(w * 7 + 6, req.num_days - 1))}:锁定的班次已有 "
+                f"{mins / 60:.1f}h,超过 {eid} 的每周工时上限 {cap / 60:g}h,必然无解。"
+            )
+    return warnings
 
 
 def _week_label(req, w_start: int, w_end: int) -> str:
@@ -116,6 +163,8 @@ def _capacity_warnings(req) -> list[str]:
 def create_app() -> FastAPI:
     app = FastAPI(title="lp-lab", version="0.1.0")
     register_home(app)
+    # Self-hosted frontend libs (three.js for the 3D chart) — no external CDN.
+    app.mount("/vendor", StaticFiles(directory=VENDOR_DIR), name="vendor")
     app.include_router(router)
     return app
 

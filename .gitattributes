@@ -2,3 +2,6 @@
 # dominates GitHub's language stats and mislabels this Python/OR-Tools project
 # as HTML. Exclude it from linguist stats.
 static/*.html linguist-vendored=true
+
+# Vendored frontend libs (three.js etc.) — not our code, exclude from linguist.
+static/vendor/** linguist-vendored=true
