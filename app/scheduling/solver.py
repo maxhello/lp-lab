@@ -183,6 +183,22 @@ def solve(req: SolveRequest) -> SolveResponse:
     add_spread(weekend_exprs, weights.fairness_weekend)
     add_spread(night_exprs, weights.fairness_night)
 
+    # ------------------------------------------------- cross-dimension balance
+    # 周末休次数常常除不尽(如 4 周 5 人 → 2,2,2,2,1)。把各维度折算成同一把
+    # "辛苦尺"(周末班 480 分、夜班 240 分、工时 60 分/时)再均衡综合分:
+    # 周末被迫多休不了的人,自动在夜班/工时上得到补偿,而不是被随机安排。
+    if weights.fairness_balance > 0 and len(employees) > 1:
+        hardship = []
+        for e in employees:
+            hr = sum(A(e.id, d, sid) * shifts[sid].duration_min
+                     for d in range(num_days) for sid in shifts if (e.id, d, sid) in assign)
+            wk = sum(A(e.id, d, sid) for d in range(num_days) if req.is_weekend(d)
+                     for sid in shifts if (e.id, d, sid) in assign)
+            nt = sum(A(e.id, d, sid) for d in range(num_days) for sid in shifts
+                     if (e.id, d, sid) in assign and shifts[sid].is_night)
+            hardship.append(hr + 480 * wk + 240 * nt)
+        add_spread(hardship, weights.fairness_balance)
+
     if obj_terms:
         model.minimize(sum(obj_terms))
 

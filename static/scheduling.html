@@ -65,26 +65,133 @@
   .btn-link { background: none; border: 1px dashed var(--border-strong); color: var(--muted); }
   .btn-link:hover { color: var(--text); border-color: var(--accent); background: none; }
   .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .solve-bar { text-align: center; margin: 26px 0; }
   .cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 800px) { .cols-2 { grid-template-columns: 1fr; } }
-  .banner { border-radius: 9px; padding: 12px 16px; margin-bottom: 14px; font-size: 13.5px;
-            border: 1px solid transparent; }
+
+  /* floating draggable solve button */
+  #solve-fab { position: fixed; right: 26px; bottom: 26px; z-index: 1000;
+               user-select: none; -webkit-user-select: none; }
+  #solve-fab #solve-btn { padding: 13px 26px; font-size: 15px; border-radius: 999px;
+                          box-shadow: 0 10px 30px #00000073; cursor: grab; touch-action: none; }
+  #solve-fab.dragging #solve-btn { cursor: grabbing; box-shadow: 0 16px 44px #00000090; }
+
+  /* toast banner: fixed to viewport, closable */
+  .banner { position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+            z-index: 1100; max-width: min(760px, calc(100vw - 28px));
+            display: flex; align-items: flex-start; gap: 12px;
+            border-radius: 9px; padding: 12px 16px; font-size: 13.5px;
+            border: 1px solid transparent; white-space: pre-line;
+            box-shadow: 0 12px 40px #00000080; }
+  .banner.hidden { display: none; }
+  #banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  #banner-close { background: none; border: none; color: inherit; font-size: 18px;
+                  line-height: 1.1; padding: 0 2px; cursor: pointer; opacity: .65; flex: none; }
+  #banner-close:hover { opacity: 1; }
   .banner.ok { background: var(--green-bg); color: var(--green-fg); border-color: var(--green-bd); }
   .banner.err { background: var(--err-bg); color: var(--err-fg); border-color: var(--err-bd); }
   .banner.warn { background: var(--yellow-bg); color: var(--yellow-fg); border-color: var(--yellow-bd); }
-  .cell-early { background: var(--green-bg); color: var(--green-fg); font-weight: 600;
-                border-color: var(--green-bd) !important; }
-  .cell-late  { background: var(--yellow-bg); color: var(--yellow-fg); font-weight: 600;
-                border-color: var(--yellow-bd) !important; }
-  .cell-night { background: var(--navy-bg); color: var(--navy-fg); font-weight: 600;
-                border-color: var(--navy-bd) !important; }
-  .cell-rest  { background: var(--rest-bg); color: var(--rest-fg);
-                border-color: var(--rest-bd) !important; }
-  .result-table td:first-child, .result-table th:first-child { text-align: left; white-space: nowrap; }
   .scroll-x { overflow-x: auto; }
   .stats-table td { text-align: right; }
   .stats-table td:first-child, .stats-table th:first-child { text-align: left; }
+
+  /* ---------- result area: KPI cards + gantt + stats bars ---------- */
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  #result:not(.hidden) > * { animation: fadeUp .45s ease both; }
+  #result:not(.hidden) > *:nth-child(2) { animation-delay: .08s; }
+  #result:not(.hidden) > *:nth-child(3) { animation-delay: .16s; }
+  #result:not(.hidden) > *:nth-child(4) { animation-delay: .24s; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;
+             margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+         padding: 14px 16px 12px; box-shadow: 0 1px 0 #ffffff06 inset, 0 8px 24px #00000040; }
+  .kpi-val { font-size: 24px; font-weight: 700; letter-spacing: .3px; }
+  .kpi-val small { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 3px; }
+  .kpi-label { font-size: 11px; color: var(--muted); margin-top: 4px; letter-spacing: .6px; }
+  .kpi-badge { display: inline-block; padding: 4px 14px; border-radius: 999px; font-size: 15px;
+               font-weight: 700; background: var(--green-bg); color: var(--green-fg);
+               border: 1px solid var(--green-bd); }
+  .kpi-badge.feasible { background: var(--yellow-bg); color: var(--yellow-fg);
+                        border-color: var(--yellow-bd); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 12px; font-size: 12px;
+            color: var(--muted); align-items: center; }
+  .legend .sw { display: inline-block; width: 22px; height: 10px; border-radius: 3px;
+                margin-right: 6px; vertical-align: -1px; }
+  .sw.bar-early { background: linear-gradient(180deg, #4ade80, #16a34a); }
+  .sw.bar-late  { background: linear-gradient(180deg, #fbbf24, #d97706); }
+  .sw.bar-night { background: linear-gradient(180deg, #818cf8, #4f46e5); }
+  .sw.bar-other { background: #64748b; }
+  .sw.sw-rest   { background: #1a2436; border: 1px solid var(--border-strong); }
+
+  .gantt-table thead th { padding: 5px 4px; }
+  .gantt-table .dow { font-size: 11px; color: var(--muted); letter-spacing: .4px; }
+  .gantt-table thead th.wknd .dow { color: var(--navy-fg); }
+  .gantt-table .dnum { font-size: 12.5px; font-weight: 600; margin-top: 1px; }
+  .gantt-table td.wknd { background: #0d1424; }
+  .gantt-table .emp { position: sticky; left: 0; z-index: 2; background: #0d1420;
+                      text-align: left; padding: 6px 12px; min-width: 104px; white-space: nowrap; }
+  .gantt-table .emp small { display: block; color: var(--muted); font-weight: 400; font-size: 11px;
+                            margin-top: 1px; }
+  .gantt-table td.day { width: 66px; min-width: 66px; padding: 4px 5px; }
+  .track { position: relative; height: 22px; border-radius: 6px;
+           background: repeating-linear-gradient(90deg, transparent 0, transparent calc(25% - 1px),
+                         #1a2438 calc(25% - 1px), #1a2438 25%), #0a0f1b; }
+  .bar { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; min-width: 4px;
+         box-shadow: 0 2px 8px #000000b0; transition: filter .15s; }
+  .bar:hover { filter: brightness(1.3); }
+  .bar-early { background: linear-gradient(180deg, #4ade80, #16a34a); }
+  .bar-late  { background: linear-gradient(180deg, #fbbf24, #d97706); }
+  .bar-night { background: linear-gradient(180deg, #818cf8, #4f46e5); }
+  .bar-other { background: linear-gradient(180deg, #94a3b8, #475569); }
+  .rest { display: block; text-align: center; font-size: 11px; color: var(--rest-fg);
+          line-height: 22px; letter-spacing: 2px; }
+
+  .hbar { position: relative; background: #0a0f1b; border-radius: 5px; height: 16px;
+          min-width: 100px; overflow: hidden; }
+  .hbar .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 5px 0 0 5px;
+                background: linear-gradient(90deg, #3b82f6, #6366f1); }
+  .hbar .txt { position: absolute; right: 7px; top: 0; line-height: 16px; font-size: 11px;
+               text-shadow: 0 1px 2px #000; }
+  .cnt { display: inline-block; min-width: 24px; padding: 1px 9px; border-radius: 999px;
+         font-size: 11.5px; font-weight: 600; }
+  .cnt-wknd  { background: var(--navy-bg); color: var(--navy-fg); border: 1px solid var(--navy-bd); }
+  .cnt-night { background: #221a3f; color: #a5b4fc; border: 1px solid #3b3370; }
+  .cnt-pref  { background: var(--green-bg); color: var(--green-fg); border: 1px solid var(--green-bd); }
+
+  /* gantt polish: week separators, row hover, bar growth, coverage strip */
+  @keyframes barIn { from { transform: scaleX(0); } }
+  .bar { transform-origin: left center; animation: barIn .3s ease both; }
+  .gantt-table tbody tr:hover td { background-color: #101b30; }
+  .gantt-table tbody tr:hover .bar { filter: brightness(1.18); }
+  .gantt-table .wsep { border-left: 2px solid var(--border-strong); }
+  .gantt-table tfoot td { font-size: 11px; color: var(--muted); padding: 3px 4px; }
+
+  /* employee workload cards */
+  .emp-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 12px; }
+  .emp-card { display: flex; gap: 14px; align-items: center; background: var(--input-bg);
+              border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px;
+              transition: border-color .15s, transform .15s; }
+  .emp-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .donut { position: relative; width: 62px; height: 62px; flex: none; }
+  .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
+  .ring-bg { fill: none; stroke: #1a2436; stroke-width: 7; }
+  .ring-fg { fill: none; stroke: #3b82f6; stroke-width: 7; stroke-linecap: round;
+             transition: stroke-dasharray .9s cubic-bezier(.22, .9, .35, 1) .15s; }
+  .donut-c { position: absolute; inset: 0; display: flex; flex-direction: column;
+             align-items: center; justify-content: center; }
+  .donut-c b { font-size: 15px; }
+  .donut-c small { color: var(--muted); font-size: 10px; }
+  .emp-info { flex: 1; min-width: 0; }
+  .emp-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+  .emp-name small { color: var(--muted); font-weight: 400; font-size: 11px; margin-left: auto; }
+  .avatar { width: 26px; height: 26px; border-radius: 8px; display: inline-flex;
+            align-items: center; justify-content: center; font-size: 13px; flex: none; }
+  .chips-line { display: flex; gap: 10px; align-items: center; margin: 7px 0 8px; flex-wrap: wrap; }
+  .pair { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+  .mix { display: flex; height: 7px; border-radius: 4px; overflow: hidden; background: #0a0f1b; }
+  .mix-seg { height: 100%; transition: filter .15s; }
+  .mix-seg:hover { filter: brightness(1.3); }
   .muted { color: var(--muted); font-size: 12px; }
   .hidden { display: none; }
   .holiday-picker { margin-top: 14px; padding: 12px; background: var(--input-bg);
@@ -150,7 +257,8 @@
     </div>
   </header>
 
-  <div id="banner" class="banner hidden"></div>
+  <div id="banner" class="banner hidden"><span id="banner-text"></span>
+    <button id="banner-close" type="button" aria-label="关闭提示">×</button></div>
   <div id="cal-pop" class="cal-pop hidden"></div>
 
   <div class="card">
@@ -167,6 +275,8 @@
       <div><label>两班最小休息(小时)</label><input type="number" id="min_rest_hours" value="11" min="0" step="0.5"></div>
       <div><label>每周工时上限</label><input type="number" id="max_hours_per_week" value="40" min="1"></div>
       <div><label>求解时限(秒)</label><input type="number" id="max_solve_seconds" value="10" min="1" max="120"></div>
+      <div><label>公平补偿力度(0=关)</label><input type="number" id="fairness_balance" value="2" min="0" max="50">
+        <span class="muted" style="font-size:11px">周末休吃亏的人,自动在夜班/工时上补偿</span></div>
     </div>
     <div id="holiday-picker" class="holiday-picker hidden">
       <span class="muted">点击日期切换节假日(置灰的日期无任何班次):</span>
@@ -224,19 +334,26 @@
     </div>
   </div>
 
-  <div class="solve-bar">
-    <button class="btn btn-primary" id="solve-btn" onclick="solveNow()">⚡ 开始求解</button>
+  <div id="solve-fab">
+    <button class="btn btn-primary" id="solve-btn" type="button">⚡ 开始求解</button>
   </div>
 
   <div id="result" class="hidden">
+    <div class="kpi-row" id="kpi-row"></div>
     <div class="card">
-      <h2>排班结果 <span id="result-meta" class="muted"></span></h2>
+      <h2>排班甘特图</h2>
+      <div class="legend" id="gantt-legend"></div>
       <div class="scroll-x">
-        <table class="result-table" id="schedule-table"></table>
+        <table class="gantt-table" id="schedule-table"></table>
       </div>
+      <p class="muted" style="margin: 10px 2px 0">每格 = 一天(0 → 24 时,自左向右),色块位置即实际上班时段;悬停查看详情。首列固定,横向滚动看整月。</p>
     </div>
     <div class="card">
-      <h2>公平性统计</h2>
+      <h2>员工负荷</h2>
+      <div class="emp-cards" id="emp-cards"></div>
+    </div>
+    <div class="card">
+      <h2>工作量与公平性</h2>
       <div class="scroll-x">
         <table class="stats-table" id="stats-table"></table>
       </div>
@@ -570,6 +687,7 @@ function collectPayload() {
       min_rest_hours: +$('min_rest_hours').value,
       max_hours_per_week: +$('max_hours_per_week').value,
     },
+    weights: { fairness_balance: +$('fairness_balance').value || 0 },
     max_solve_seconds: +$('max_solve_seconds').value,
   };
 }
@@ -590,12 +708,16 @@ async function solveNow() {
   $('solve-btn').textContent = '求解中…';
   hideBanner();
 
+  let preWarnings = [];
   try {
     // pre-validate
     const vr = await fetch('/api/scheduling/validate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
     if (vr.ok) {
       const v = await vr.json();
-      if (!v.ok) showBanner('warn', '⚠ 可能不可行: ' + v.warnings[0] + ' — 仍尝试求解…');
+      if (!v.ok) {
+        preWarnings = v.warnings;
+        showBanner('warn', '⚠ 可能不可行: ' + v.warnings.join('\n') + ' — 仍尝试求解…');
+      }
     }
 
     const r = await fetch('/api/scheduling/solve', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
@@ -605,7 +727,7 @@ async function solveNow() {
       return showBanner('err', '⚠ 输入错误 (HTTP ' + r.status + '): ' + msg);
     }
     lastResponse = await r.json();
-    renderResult(payload, lastResponse);
+    renderResult(payload, lastResponse, preWarnings);
     save();
   } catch (e) {
     showBanner('err', '⚠ 请求失败: ' + e.message);
@@ -616,67 +738,196 @@ async function solveNow() {
 }
 
 // ------------------------------------------------------------ render result
-function cellClass(shiftId, isNight) {
-  const s = shiftId.toLowerCase();
-  if (isNight || s.includes('night') || s.includes('夜')) return 'cell-night';
-  if (s.includes('late') || s.includes('晚')) return 'cell-late';
-  if (s.includes('early') || s.includes('早') || s.includes('day')) return 'cell-early';
-  return '';
+function barClass(shiftId, isNight) {
+  const s = (shiftId || '').toLowerCase();
+  if (isNight || s.includes('night') || s.includes('夜')) return 'bar-night';
+  if (s.includes('late') || s.includes('晚')) return 'bar-late';
+  if (s.includes('early') || s.includes('早') || s.includes('day')) return 'bar-early';
+  return 'bar-other';
 }
+const esc = s => String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const shiftDur = s => { const b = toMin(s.start), e = toMin(s.end); return e > b ? e - b : e + 1440 - b; };
+const chip = (v, kind) => v > 0 ? `<span class="cnt cnt-${kind}">${v}</span>` : '<span class="muted">0</span>';
 
-function renderResult(payload, resp) {
+function renderResult(payload, resp, preWarnings = []) {
   $('result').classList.remove('hidden');
+  // Keep pre-solve validate warnings visible: the solve result banner would
+  // otherwise clobber them within milliseconds.
+  const warnSuffix = preWarnings.length ? '\n' + preWarnings.map(w => '⚠ ' + w).join('\n') : '';
 
   if (resp.status === 'INFEASIBLE' || resp.status === 'UNKNOWN') {
+    $('kpi-row').innerHTML = '';
     $('schedule-table').innerHTML = '';
+    $('emp-cards').innerHTML = '';
     $('stats-table').innerHTML = '';
     $('fairness-summary').textContent = '';
-    return showBanner('err', `⚠ ${resp.status === 'INFEASIBLE' ? '无可行解' : '未在时限内找到解'} — ${resp.message}`);
+    return showBanner('err', `⚠ ${resp.status === 'INFEASIBLE' ? '无可行解' : '未在时限内找到解'} — ${resp.message}${warnSuffix}`);
   }
 
-  showBanner('ok', `✓ 求解成功 · 状态 ${resp.status} · ${resp.solve_time_ms.toFixed(0)}ms`);
-  $('result-meta').textContent = `· ${resp.assignments.length} 个班次 · ${(resp.solve_time_ms).toFixed(0)}ms`;
+  showBanner('ok', `✓ 求解成功 · 状态 ${resp.status} · ${resp.solve_time_ms.toFixed(0)}ms${warnSuffix}`);
 
   const n = payload.num_days;
   const shifts = Object.fromEntries(payload.shifts.map(s => [s.id, s]));
-  const byEmp = {};
-  for (const a of resp.assignments) (byEmp[a.employee_id] ??= {})[a.day] = a.shift_id;
-
-  let html = '<thead><tr><th>员工 \\ 日期</th>';
-  for (let d = 0; d < n; d++)
-    html += `<th class="${isHoliday(d) ? 'holiday' : ''}">${dayLabel(d)}</th>`;
-  html += '<th>工时</th></tr></thead><tbody>';
   const statsById = Object.fromEntries(resp.stats.map(s => [s.employee_id, s]));
+  const shiftName = sid => shifts[sid]?.name || sid;
 
-  for (const e of payload.employees) {
-    html += `<tr><th>${e.name}</th>`;
-    for (let d = 0; d < n; d++) {
-      const sid = byEmp[e.id]?.[d];
-      if (sid) {
-        const cls = cellClass(sid, shifts[sid]?.is_night);
-        html += `<td class="${cls}">${sid}</td>`;
-      } else if (isHoliday(d)) {
-        html += '<td class="holiday">假</td>';
-      } else {
-        html += '<td class="cell-rest">休</td>';
-      }
-    }
-    const st = statsById[e.id];
-    html += `<td>${st ? st.total_hours.toFixed(1) + 'h' : '-'}</td></tr>`;
+  // employee → day → [shift ids](one_shift_per_day 关闭时一天可能多班)
+  const byEmp = {};
+  for (const a of resp.assignments) {
+    (byEmp[a.employee_id] ??= {});
+    (byEmp[a.employee_id][a.day] ??= []).push(a.shift_id);
   }
-  html += '</tbody>';
-  $('schedule-table').innerHTML = html;
 
-  // stats table
-  let sh = '<thead><tr><th>员工</th><th>总工时</th><th>班次数</th><th>周末班</th><th>夜班</th><th>偏好班</th></tr></thead><tbody>';
-  for (const s of resp.stats)
-    sh += `<tr><td>${s.name}</td><td>${s.total_hours.toFixed(1)}h</td><td>${s.shift_count}</td><td>${s.weekend_shifts}</td><td>${s.night_shifts}</td><td>${s.preferred_shifts}</td></tr>`;
+  // ------------------------------------------------------------ KPI cards
   const hrs = resp.stats.map(s => s.total_hours);
   const wk = resp.stats.map(s => s.weekend_shifts);
   const nt = resp.stats.map(s => s.night_shifts);
-  sh += `<tr><th>差距 (max−min)</th><th>${(Math.max(...hrs)-Math.min(...hrs)).toFixed(1)}h</th><th>-</th><th>${Math.max(...wk)-Math.min(...wk)}</th><th>${Math.max(...nt)-Math.min(...nt)}</th><th>-</th></tr>`;
+  const totalHours = hrs.reduce((t, h) => t + h, 0);
+  const kpis = [
+    `<div class="kpi"><div class="kpi-val"><span class="kpi-badge ${resp.status === 'OPTIMAL' ? '' : 'feasible'}">${resp.status === 'OPTIMAL' ? '✓ 最优' : '≈ 可行'}</span></div><div class="kpi-label">求解耗时 ${resp.solve_time_ms.toFixed(0)}ms</div></div>`,
+    `<div class="kpi"><div class="kpi-val"><span data-count="${resp.assignments.length}">0</span><small>班</small></div><div class="kpi-label">${n} 天 · ${payload.employees.length} 人</div></div>`,
+    `<div class="kpi"><div class="kpi-val"><span data-count="${totalHours.toFixed(0)}">0</span><small>h</small></div><div class="kpi-label">总工时 · 人均 ${(totalHours / payload.employees.length).toFixed(1)}h</div></div>`,
+    `<div class="kpi"><div class="kpi-val"><span data-count="${(resp.assignments.length / n).toFixed(1)}" data-dec="1">0</span></div><div class="kpi-label">日均班次</div></div>`,
+    `<div class="kpi"><div class="kpi-val"><span data-count="${(Math.max(...hrs) - Math.min(...hrs)).toFixed(1)}" data-dec="1">0</span><small>h</small></div><div class="kpi-label">工时差距 (max−min)</div></div>`,
+    `<div class="kpi"><div class="kpi-val"><span data-count="${Math.max(...wk) - Math.min(...wk)}">0</span><small>班</small> / <span data-count="${Math.max(...nt) - Math.min(...nt)}">0</span><small>班</small></div><div class="kpi-label">周末 / 夜班差距</div></div>`,
+  ];
+  $('kpi-row').innerHTML = kpis.join('');
+  countUpKpis();
+
+  // ------------------------------------------------------------ gantt legend
+  $('gantt-legend').innerHTML =
+    payload.shifts.map(s => `<span><span class="sw ${barClass(s.id, s.is_night)}"></span>${esc(shiftName(s.id))} ${s.start}–${s.end}</span>`).join('') +
+    '<span><span class="sw sw-rest"></span>休息</span>';
+
+  // ------------------------------------------------------------ gantt table
+  const isWknd = d => { const g = dayDate(d).getDay(); return g === 0 || g === 6; };
+  const isMonday = d => d > 0 && dayDate(d).getDay() === 1;   // 周分隔线
+  const dcls = d => [isHoliday(d) ? 'holiday' : '', isWknd(d) ? 'wknd' : '', isMonday(d) ? 'wsep' : ''].filter(Boolean).join(' ');
+  let html = '<thead><tr><th class="emp">员工</th>';
+  for (let d = 0; d < n; d++) {
+    const dt = dayDate(d);
+    const dow = DAY_NAMES[dt.getDay() === 0 ? 6 : dt.getDay() - 1];
+    html += `<th class="${dcls(d)}"><div class="dow">${dow}</div><div class="dnum">${dt.getMonth() + 1}/${dt.getDate()}</div></th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  for (const e of payload.employees) {
+    const st = statsById[e.id];
+    html += `<tr><th class="emp">${esc(e.name)}<small>${st ? `${st.total_hours.toFixed(1)}h · ${st.shift_count}班` : ''}</small></th>`;
+    for (let d = 0; d < n; d++) {
+      const sids = byEmp[e.id]?.[d];
+      const hcls = dcls(d);
+      if (sids?.length) {
+        const bars = sids.map(sid => {
+          const s = shifts[sid];
+          if (!s) return '';
+          const left = toMin(s.start) / 14.4;      // % of 1440 min
+          const width = shiftDur(s) / 14.4;
+          return `<div class="bar ${barClass(sid, s.is_night)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;animation-delay:${Math.min(d * 15, 450)}ms"` +
+                 ` title="${esc(shiftName(sid))} ${s.start}–${s.end} · ${esc(e.name)}"></div>`;
+        }).join('');
+        html += `<td class="day ${hcls}"><div class="track">${bars}</div></td>`;
+      } else {
+        html += `<td class="day ${hcls}"><span class="rest">${isHoliday(d) ? '假' : '休'}</span></td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  // 每日在岗人数(热力底色,悬停看班次构成)
+  const perDay = Array(n).fill(0);
+  const perDayShifts = Array.from({ length: n }, () => ({}));
+  for (const a of resp.assignments) {
+    perDay[a.day]++;
+    perDayShifts[a.day][a.shift_id] = (perDayShifts[a.day][a.shift_id] || 0) + 1;
+  }
+  const maxDay = Math.max(...perDay, 1);
+  html += '</tbody><tfoot><tr><th class="emp">在岗</th>';
+  for (let d = 0; d < n; d++) {
+    const detail = payload.shifts.map(s => `${shiftName(s.id)}×${perDayShifts[d][s.id] || 0}`).join(' ');
+    const alpha = (perDay[d] / maxDay * 0.5).toFixed(2);
+    html += `<td class="${dcls(d)}" style="background:rgba(59,130,246,${alpha})" title="${esc(detail)}">${perDay[d] || '·'}</td>`;
+  }
+  html += '</tr></tfoot>';
+  $('schedule-table').innerHTML = html;
+
+  renderEmployeeCards(payload, resp);
+
+  // ------------------------------------------------------------ stats table
+  const maxH = Math.max(...hrs, 0.001);
+  let sh = '<thead><tr><th>员工</th><th style="width:36%">总工时</th><th>班次</th><th>周末班</th><th>夜班</th><th>偏好班</th></tr></thead><tbody>';
+  for (const s of resp.stats) {
+    sh += `<tr><td>${esc(s.name)}</td>` +
+      `<td><div class="hbar"><div class="fill" style="width:${(s.total_hours / maxH * 100).toFixed(1)}%"></div><span class="txt">${s.total_hours.toFixed(1)}h</span></div></td>` +
+      `<td>${s.shift_count}</td><td>${chip(s.weekend_shifts, 'wknd')}</td>` +
+      `<td>${chip(s.night_shifts, 'night')}</td><td>${chip(s.preferred_shifts, 'pref')}</td></tr>`;
+  }
+  sh += `<tr><th>差距 (max−min)</th><th>${(Math.max(...hrs) - Math.min(...hrs)).toFixed(1)}h</th><th>-</th>` +
+        `<th>${Math.max(...wk) - Math.min(...wk)}</th><th>${Math.max(...nt) - Math.min(...nt)}</th><th>-</th></tr>`;
   sh += '</tbody>';
   $('stats-table').innerHTML = sh;
+
+  $('fairness-summary').textContent =
+    `工时 ${Math.min(...hrs).toFixed(1)}–${Math.max(...hrs).toFixed(1)}h(差 ${(Math.max(...hrs) - Math.min(...hrs)).toFixed(1)})` +
+    ` · 周末班 ${Math.min(...wk)}–${Math.max(...wk)} · 夜班 ${Math.min(...nt)}–${Math.max(...nt)}`;
+}
+
+// KPI 数字滚动动画(ease-out cubic)
+function countUpKpis() {
+  document.querySelectorAll('#kpi-row [data-count]').forEach(el => {
+    const target = parseFloat(el.dataset.count), dec = +(el.dataset.dec || 0);
+    const t0 = performance.now(), dur = 650;
+    const tick = t => {
+      const p = Math.min(1, (t - t0) / dur);
+      el.textContent = (target * (1 - Math.pow(1 - p, 3))).toFixed(dec);
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+// 员工负荷卡片:环形进度(总工时/容量)+ 头像 + 周末/夜班/偏好 + 班型占比条
+function renderEmployeeCards(payload, resp) {
+  const n = payload.num_days;
+  const weeks = Math.ceil(n / 7);
+  const counts = {};                                     // emp → {shift_id: n}
+  for (const a of resp.assignments) ((counts[a.employee_id] ??= {})[a.shift_id] ??= 0), counts[a.employee_id][a.shift_id]++;
+  const CIRC = (2 * Math.PI * 28).toFixed(1);
+  const statsById = Object.fromEntries(resp.stats.map(s => [s.employee_id, s]));
+
+  let html = '';
+  for (const e of payload.employees) {
+    const st = statsById[e.id];
+    if (!st) continue;
+    const cap = (e.max_hours_per_week || payload.constraints.max_hours_per_week) * weeks;
+    const pct = Math.min(100, st.total_hours / cap * 100);
+    const hue = [...e.name].reduce((t, c) => t + c.codePointAt(0), 0) % 360;
+    const mix = st.shift_count ? payload.shifts.map(s => {
+      const c = counts[e.id]?.[s.id] || 0;
+      return c ? `<div class="mix-seg ${barClass(s.id, s.is_night)}" style="width:${(c / st.shift_count * 100).toFixed(1)}%" title="${esc(s.name || s.id)} × ${c}"></div>` : '';
+    }).join('') : '';
+    html += `<div class="emp-card">
+      <div class="donut" title="总工时 ${st.total_hours.toFixed(1)}h / 容量 ${cap.toFixed(0)}h">
+        <svg viewBox="0 0 66 66"><circle class="ring-bg" cx="33" cy="33" r="28"/>
+        <circle class="ring-fg" cx="33" cy="33" r="28" stroke-dasharray="0 ${CIRC}" data-final="${(CIRC * pct / 100).toFixed(1)} ${CIRC}"/></svg>
+        <div class="donut-c"><b>${st.total_hours.toFixed(0)}</b><small>小时</small></div>
+      </div>
+      <div class="emp-info">
+        <div class="emp-name"><span class="avatar" style="background:hsl(${hue} 42% 24%);color:hsl(${hue} 80% 76%)">${esc([...e.name][0] || '?')}</span>${esc(e.name)}<small>${st.shift_count} 班</small></div>
+        <div class="chips-line">
+          <span class="pair">周末${chip(st.weekend_shifts, 'wknd')}</span>
+          <span class="pair">夜班${chip(st.night_shifts, 'night')}</span>
+          <span class="pair">偏好${chip(st.preferred_shifts, 'pref')}</span>
+        </div>
+        <div class="mix">${mix}</div>
+      </div>
+    </div>`;
+  }
+  $('emp-cards').innerHTML = html;
+  // 环形进度动画:先渲染 0,下一帧设目标值触发 CSS transition
+  requestAnimationFrame(() => requestAnimationFrame(() =>
+    document.querySelectorAll('.ring-fg').forEach(c => c.setAttribute('stroke-dasharray', c.dataset.final))));
 }
 
 function exportCsv() {
@@ -693,8 +944,57 @@ function exportCsv() {
 }
 
 // ------------------------------------------------------------ banners
-function showBanner(kind, text) { const b = $('banner'); b.className = `banner ${kind}`; b.textContent = text; }
-function hideBanner() { $('banner').className = 'banner hidden'; }
+function showBanner(kind, text) {
+  const b = $('banner');
+  b.className = `banner ${kind}`;
+  $('banner-text').textContent = text;
+  clearTimeout(bannerTimer);
+  // 成功提示 6s 后自动淡出;错误/警告由用户手动关闭
+  if (kind === 'ok') bannerTimer = setTimeout(hideBanner, 6000);
+}
+function hideBanner() { clearTimeout(bannerTimer); $('banner').className = 'banner hidden'; }
+let bannerTimer = null;
+$('banner-close').onclick = hideBanner;
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') hideBanner(); });
+
+// ------------------------------------------------------------ floating solve button
+// 悬浮求解按钮:点击求解,按住拖动可改位置(位移 >5px 视为拖动,不触发求解)。
+(() => {
+  const fab = $('solve-fab');
+  const btn = $('solve-btn');
+  let startX = 0, startY = 0, origL = 0, origT = 0, moved = false, pressed = false;
+
+  fab.addEventListener('pointerdown', ev => {
+    if (btn.disabled) return;
+    pressed = true; moved = false;
+    startX = ev.clientX; startY = ev.clientY;
+    const r = fab.getBoundingClientRect();
+    origL = r.left; origT = r.top;
+    fab.setPointerCapture(ev.pointerId);
+  });
+  fab.addEventListener('pointermove', ev => {
+    if (!pressed) return;
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (!moved && Math.hypot(dx, dy) < 5) return;
+    moved = true;
+    fab.classList.add('dragging');
+    const x = Math.min(Math.max(0, origL + dx), window.innerWidth - fab.offsetWidth);
+    const y = Math.min(Math.max(0, origT + dy), window.innerHeight - fab.offsetHeight);
+    fab.style.left = x + 'px'; fab.style.top = y + 'px';
+    fab.style.right = 'auto'; fab.style.bottom = 'auto';
+  });
+  const endDrag = () => {
+    if (!pressed) return;
+    pressed = false;
+    fab.classList.remove('dragging');
+  };
+  fab.addEventListener('pointerup', endDrag);
+  fab.addEventListener('pointercancel', endDrag);
+  // 正常点击 → 求解;拖动结束后的 click → 吞掉(moved 复位留给下一次 pointerdown)。
+  // 注意:click 必须挂在 fab 上 —— setPointerCapture 会把 mouseup 重定向到 fab,
+  // 导致 click 派发在 fab 而非按钮本身。
+  fab.addEventListener('click', () => { if (moved) return; solveNow(); });
+})();
 
 // ------------------------------------------------------------ persistence
 const LS_KEY = 'lp-lab-input';
@@ -722,6 +1022,7 @@ function restore() {
     $('min_rest_hours').value = p.constraints.min_rest_hours;
     $('max_hours_per_week').value = p.constraints.max_hours_per_week;
     $('max_solve_seconds').value = p.max_solve_seconds;
+    if (p.weights?.fairness_balance != null) $('fairness_balance').value = p.weights.fairness_balance;
     p.employees.forEach(e => addEmployeeRow(e));
     p.shifts.forEach(s => addShiftRow(s));
     const savedHolidays = new Set(p.holidays || []);

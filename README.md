@@ -115,6 +115,11 @@ Each `(employee, day, shift)` triple becomes a boolean variable in a CP-SAT mode
 
 The objective minimises (with configurable weights):
 - **fairness**: max−min spread of total hours, weekend-shift counts, night-shift counts
+- **cross-dimension balance** (`fairness_balance`, off by default, the web UI enables 2):
+  weekend shifts, night shifts and hours are converted into one hardship score
+  (weekend shift = 480, night shift = 240, 1 hour = 60) whose spread is minimised —
+  when weekend rests cannot be split evenly (e.g. 4 weekends over 5 people),
+  the person who loses weekend rest is compensated with fewer nights / lighter load
 - **preference violations**: soft time-offs assigned
 - and maximises preferred-shift assignments
 

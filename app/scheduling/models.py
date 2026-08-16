@@ -91,6 +91,14 @@ class ObjectiveWeights(BaseModel):
     fairness_hours: int = Field(default=10, ge=0)
     fairness_weekend: int = Field(default=5, ge=0)
     fairness_night: int = Field(default=5, ge=0)
+    fairness_balance: int = Field(
+        default=0, ge=0,
+        description="Cross-dimension compensation: weekend shifts, night shifts and hours are "
+                    "converted to one hardship score (weekend shift=480, night shift=240, "
+                    "1 hour=60) whose spread is minimised. Someone who unavoidably loses "
+                    "weekend rest gets compensated with fewer nights / lighter load. "
+                    "0=off (default; the web UI enables 2)",
+    )
     preference: int = Field(default=1, ge=0)
     soft_timeoff: int = Field(default=50, ge=0)
 
