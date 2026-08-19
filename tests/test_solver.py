@@ -212,3 +212,53 @@ def test_stats_consistent_with_assignments(small_request):
         for a in resp.assignments
     )
     assert abs(total_hours - expected) < 1e-6
+
+
+def test_one_shift_per_day_off_allows_two_shifts_same_day():
+    """works must not cap a day at one shift when one_shift_per_day is off.
+
+    2 employees, 2 half-day shifts, min_staff=2 each: the only feasible
+    schedule has everyone working both shifts the same day."""
+    from app.scheduling.models import ConstraintsConfig, CoverageRequirement, Employee
+    employees = [Employee(id=f"e{i}", name=f"E{i}") for i in range(1, 3)]
+    shifts = [
+        ShiftType(id="early", start="08:00", end="12:00"),
+        ShiftType(id="late", start="13:00", end="17:00"),
+    ]
+    coverage = [CoverageRequirement(day=0, shift_id=sid, min_staff=2, max_staff=2)
+                for sid in ("early", "late")]
+    req = SolveRequest(
+        num_days=1, employees=employees, shifts=shifts, coverage=coverage,
+        constraints=ConstraintsConfig(one_shift_per_day=False, max_hours_per_week=40),
+    )
+    resp = solve(req)
+    assert resp.status in ("OPTIMAL", "FEASIBLE"), resp.message
+    assert resp.shortfalls == []
+    assert len(resp.assignments) == 4
+    assert _recompute_ok(req, resp.assignments) == []
+
+
+def test_spread_bound_scales_with_num_days():
+    """Spread aux vars must not cap an employee's total at 31 days of minutes.
+
+    num_days allows up to 62; with fairness weights on, a schedule forcing
+    more than 31×1440 minutes per employee used to come back understaffed
+    (max_equality against an undersized domain) instead of fully covered."""
+    from app.scheduling.models import ConstraintsConfig, CoverageRequirement, Employee, \
+        ObjectiveWeights
+    employees = [Employee(id=f"e{i}", name=f"E{i}") for i in range(1, 3)]
+    shifts = [ShiftType(id="full", start="08:00", end="08:00")]  # 24h
+    coverage = [CoverageRequirement(day=d, shift_id="full", min_staff=2, max_staff=2)
+                for d in range(40)]
+    req = SolveRequest(
+        num_days=40, employees=employees, shifts=shifts, coverage=coverage,
+        constraints=ConstraintsConfig(
+            max_consecutive_days=40, min_rest_hours=0, max_hours_per_week=168),
+        weights=ObjectiveWeights(fairness_hours=10, fairness_weekend=0, fairness_night=0),
+        max_solve_seconds=10,
+    )
+    resp = solve(req)
+    assert resp.status in ("OPTIMAL", "FEASIBLE"), resp.message
+    assert resp.shortfalls == []
+    assert len(resp.assignments) == 80  # both employees, every day
+    assert _recompute_ok(req, resp.assignments) == []
