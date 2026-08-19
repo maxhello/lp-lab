@@ -14,9 +14,6 @@ from ortools.sat.python import cp_model
 from .models import Assignment, SolveRequest, SolveResponse
 from .stats import compute_shortfalls, compute_stats
 
-# Generous upper bound for spread variables (31 days of minutes).
-_UB = 44640
-
 
 def _forbidden_pairs(req: SolveRequest) -> set[tuple[int, str, str]]:
     """Triples (gap, s1, s2) violating min rest when s1 is on day d, s2 on day d+gap.
@@ -41,7 +38,8 @@ def _forbidden_pairs(req: SolveRequest) -> set[tuple[int, str, str]]:
     return bad
 
 
-def _fixed_conflict_message(req: SolveRequest) -> Optional[str]:
+def _fixed_conflict_message(req: SolveRequest,
+                            forbidden: set[tuple[int, str, str]]) -> Optional[str]:
     """Targeted INFEASIBLE reason caused by fixed_assignments alone, if any."""
     fixed = {(a.employee_id, a.day, a.shift_id) for a in req.fixed_assignments}
     if not fixed:
@@ -62,7 +60,7 @@ def _fixed_conflict_message(req: SolveRequest) -> Optional[str]:
                         f"'{eid}' ({', '.join(sorted(sids))}) but one_shift_per_day "
                         f"is enabled.")
 
-    for gap, s1, s2 in _forbidden_pairs(req):
+    for gap, s1, s2 in forbidden:
         for eid, d, sid in fixed:
             if sid == s1 and (eid, d + gap, s2) in fixed:
                 return (f"Fixed assignments for '{eid}' break min rest: "
@@ -74,7 +72,8 @@ def _fixed_conflict_message(req: SolveRequest) -> Optional[str]:
 def solve(req: SolveRequest) -> SolveResponse:
     started = time.perf_counter()
 
-    conflict = _fixed_conflict_message(req)
+    forbidden = _forbidden_pairs(req)
+    conflict = _fixed_conflict_message(req, forbidden)
     if conflict:
         return SolveResponse(
             status="INFEASIBLE",
@@ -109,8 +108,12 @@ def solve(req: SolveRequest) -> SolveResponse:
         for d in range(num_days):
             day_vars = [A(e.id, d, sid) for sid in shifts if (e.id, d, sid) in assign]
             if day_vars:
+                # w ⟺ e works at least one shift that day. Two inequalities,
+                # NOT sum == w: equality against a bool would cap the day at
+                # one shift even when one_shift_per_day is off.
                 w = model.new_bool_var(f"w_{e.id}_{d}")
-                model.add(sum(day_vars) == w)
+                model.add(sum(day_vars) >= w)
+                model.add(sum(day_vars) <= len(day_vars) * w)
                 works[(e.id, d)] = w
 
     # ------------------------------------------------------ fixed + hints
@@ -186,7 +189,7 @@ def solve(req: SolveRequest) -> SolveResponse:
                 model.add(sum(window) <= max_consec)
 
     # ------------------------------------------------------------- min rest
-    for gap, s1, s2 in _forbidden_pairs(req):
+    for gap, s1, s2 in forbidden:
         for e in employees:
             for d in range(num_days - gap):
                 if (e.id, d, s1) in assign and (e.id, d + gap, s2) in assign:
@@ -230,51 +233,54 @@ def solve(req: SolveRequest) -> SolveResponse:
         if pref_terms:
             obj_terms.append(-weights.preference * sum(pref_terms))
 
-    def add_spread(exprs: list, weight: int) -> None:
+    # Safe upper bounds for the spread aux vars: per day an employee can hold at
+    # most one assignment per shift type; a shift lasts at most 24h, and the
+    # composite hardship score adds at most 480 (weekend) + 240 (night) per
+    # shift. Derived from the request — a hardcoded 31-day bound silently
+    # understaffed schedules whose totals exceeded it (num_days goes to 62).
+    count_ub = max(1, len(shifts)) * num_days
+    hours_ub = count_ub * 1440
+    hardship_ub = count_ub * 2160
+
+    def add_spread(exprs: list, weight: int, ub: int) -> None:
         """Fairness term: penalise (max − min) of the given per-employee expressions."""
         if weight <= 0 or len(exprs) < 2:
             return
-        max_v = model.new_int_var(0, _UB, "spread_max")
-        min_v = model.new_int_var(0, _UB, "spread_min")
+        max_v = model.new_int_var(0, ub, "spread_max")
+        min_v = model.new_int_var(0, ub, "spread_min")
         model.add_max_equality(max_v, exprs)
         model.add_min_equality(min_v, exprs)
         obj_terms.append(weight * (max_v - min_v))
 
-    hour_exprs = []
-    weekend_exprs = []
-    night_exprs = []
+    # Per-employee workload expressions, shared by the spread terms below and
+    # the composite hardship score.
+    hr_terms: dict[str, list] = {}
+    wk_terms: dict[str, list] = {}
+    nt_terms: dict[str, list] = {}
     for e in employees:
-        terms = [A(e.id, d, sid) * shifts[sid].duration_min
-                 for d in range(num_days) for sid in shifts if (e.id, d, sid) in assign]
-        if terms:
-            hour_exprs.append(sum(terms))
-        w_terms = [A(e.id, d, sid) for d in range(num_days) if req.is_weekend(d)
-                   for sid in shifts if (e.id, d, sid) in assign]
-        if w_terms:
-            weekend_exprs.append(sum(w_terms))
-        n_terms = [A(e.id, d, sid) for d in range(num_days) for sid in shifts
-                   if (e.id, d, sid) in assign and shifts[sid].is_night]
-        if n_terms:
-            night_exprs.append(sum(n_terms))
-    add_spread(hour_exprs, weights.fairness_hours)
-    add_spread(weekend_exprs, weights.fairness_weekend)
-    add_spread(night_exprs, weights.fairness_night)
+        hr_terms[e.id] = [A(e.id, d, sid) * shifts[sid].duration_min
+                          for d in range(num_days) for sid in shifts
+                          if (e.id, d, sid) in assign]
+        wk_terms[e.id] = [A(e.id, d, sid) for d in range(num_days) if req.is_weekend(d)
+                          for sid in shifts if (e.id, d, sid) in assign]
+        nt_terms[e.id] = [A(e.id, d, sid) for d in range(num_days) for sid in shifts
+                          if (e.id, d, sid) in assign and shifts[sid].is_night]
+
+    add_spread([sum(t) for t in hr_terms.values() if t],
+               weights.fairness_hours, hours_ub)
+    add_spread([sum(t) for t in wk_terms.values() if t],
+               weights.fairness_weekend, count_ub)
+    add_spread([sum(t) for t in nt_terms.values() if t],
+               weights.fairness_night, count_ub)
 
     # ------------------------------------------------- cross-dimension balance
     # 周末休次数常常除不尽(如 4 周 5 人 → 2,2,2,2,1)。把各维度折算成同一把
     # "辛苦尺"(周末班 480 分、夜班 240 分、工时 60 分/时)再均衡综合分:
     # 周末被迫多休不了的人,自动在夜班/工时上得到补偿,而不是被随机安排。
     if weights.fairness_balance > 0 and len(employees) > 1:
-        hardship = []
-        for e in employees:
-            hr = sum(A(e.id, d, sid) * shifts[sid].duration_min
-                     for d in range(num_days) for sid in shifts if (e.id, d, sid) in assign)
-            wk = sum(A(e.id, d, sid) for d in range(num_days) if req.is_weekend(d)
-                     for sid in shifts if (e.id, d, sid) in assign)
-            nt = sum(A(e.id, d, sid) for d in range(num_days) for sid in shifts
-                     if (e.id, d, sid) in assign and shifts[sid].is_night)
-            hardship.append(hr + 480 * wk + 240 * nt)
-        add_spread(hardship, weights.fairness_balance)
+        hardship = [sum(hr_terms[e.id]) + 480 * sum(wk_terms[e.id])
+                    + 240 * sum(nt_terms[e.id]) for e in employees]
+        add_spread(hardship, weights.fairness_balance, hardship_ub)
 
     if obj_terms:
         model.minimize(sum(obj_terms))

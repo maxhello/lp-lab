@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from ..pages import register_home
 from .models import SolveRequest, SolveResponse
-from .solver import solve
+from .solver import _forbidden_pairs, solve
 
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
 VENDOR_DIR = STATIC_DIR / "vendor"
@@ -84,6 +84,17 @@ def _fixed_assignment_warnings(req: SolveRequest) -> list[str]:
                 warnings.append(
                     f"{eid} 第 {d} 天锁定了 {len(sids)} 个班次({'、'.join(sorted(sids))}),"
                     f"与「每天最多一班」冲突,必然无解。"
+                )
+
+    # 锁定班次之间的最小休息冲突:求解器会直接判 INFEASIBLE,能提前指出就不浪费一次求解。
+    # 复用 solver 的 forbidden-pairs 逻辑,保持两处判定一致。
+    fixed = {(a.employee_id, a.day, a.shift_id) for a in req.fixed_assignments}
+    for gap, s1, s2 in _forbidden_pairs(req):
+        for eid, d, sid in fixed:
+            if sid == s1 and (eid, d + gap, s2) in fixed:
+                warnings.append(
+                    f"{eid} 锁定的班次休息不足:'{s1}'(第 {d} 天)接 '{s2}'(第 {d + gap} 天),"
+                    f"间隔小于最小休息 {req.constraints.min_rest_hours:g} 小时,必然无解。"
                 )
 
     shift_by_id = {s.id: s for s in req.shifts}
